@@ -2,38 +2,49 @@ from fastapi import FastAPI
 
 app = FastAPI()
 
-groceryStore_list = []
-
-grocery_items = []
+stores, items, categories = [], [], []
 
 # stores
 @app.get("/stores")
-async def get_strings():
-    return {"Grocery Stores": groceryStore_list}
+def get_stores():
+    return stores
 
 @app.post("/stores")
-async def add_string(name: str = ""):
-    groceryStore_list.append(name)
-    return {"Grocery Stores": groceryStore_list}
+def add_store(name: str):
+    stores.append(name)
+    return stores
 
-@app.delete("/stores")
-async def delete_string(index: int = 0):
-    groceryStore_list.pop(index)
-    return {"Grocery Stores": groceryStore_list}
+@app.delete("/stores/{i}")
+def delete_store(i: int):
+    stores.pop(i)
+    return stores
 
 # items
 @app.get("/items")
-async def get_items():
-    return {"Items": grocery_items}
+def get_items():
+    return items
 
 @app.post("/items")
-async def add_item(name: str = "", price: float = 0.0, store: str = ""):
-    grocery_items.append({"name": name, "price": price, "store": store})
-    return {"Items": grocery_items}
+def add_item(name: str, price: float, store: str, category: str):
+    items.append({"name": name, "price": price, "store": store, "category": category})
+    return items
 
-@app.delete("/items")
-async def delete_item(index: int = 0):
-    grocery_items.pop(index)
-    return {"Items": grocery_items}
+@app.delete("/items/{i}")
+def delete_item(i: int):
+    items.pop(i)
+    return items
 
-# prices
+# categories
+@app.get("/categories")
+def get_categories():
+    return categories
+
+@app.post("/categories")
+def add_category(name: str, description: str = ""):
+    categories.append({"name": name, "description": description})
+    return categories
+
+@app.delete("/categories/{i}")
+def delete_category(i: int):
+    categories.pop(i)
+    return categories
