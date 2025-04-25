@@ -1,68 +1,139 @@
-# marketBasketAPI.py
-
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 import os, requests, base64
 
-load_dotenv()  # loads kroger creds from .env
+load_dotenv()
 
 app = FastAPI()
-stores, items, categories = [], [], []
 
-# ----- store endpoints -----
-@app.get("/stores")
-def get_stores():
-    return stores
+# --------- Pydantic Models ---------
 
-@app.post("/stores")
-def add_store(name: str):
-    stores.append(name)
-    return stores
+class Brand(BaseModel):
+    id: int
+    name: str
 
-@app.delete("/stores/{i}")
-def delete_store(i: int):
-    stores.pop(i)
-    return stores
+    class Config:
+        orm_mode = True
 
-# ----- item endpoints -----
-@app.get("/items")
-def get_items():
-    return items
+class Term(BaseModel):
+    id: int
+    name: str
+    price: float
+    brand: str
+    location: str
 
-@app.post("/items")
-def add_item(name: str, price: float, store: str, category: str):
-    items.append({"name": name, "price": price, "store": store, "category": category})
-    return items
+    class Config:
+        orm_mode = True
 
-@app.delete("/items/{i}")
-def delete_item(i: int):
-    items.pop(i)
-    return items
+class Location(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = ""
 
-# ----- category endpoints -----
-@app.get("/categories")
-def get_categories():
-    return categories
+    class Config:
+        orm_mode = True
 
-@app.post("/categories")
-def add_category(name: str, description: str = ""):
-    categories.append({"name": name, "description": description})
-    return categories
+brands = [
+    Brand(id=1, name="Kroger"),
+    Brand(id=2, name="Degree"),
+    Brand(id=3, name="General Mills")
+]
 
-@app.delete("/categories/{i}")
-def delete_category(i: int):
-    categories.pop(i)
-    return categories
+terms = [
+    Term(id=1, name="strawberries", price=3.49, brand="Kroger", location="chicago"),
+    Term(id=2, name="deodorant", price=5.99, brand="Degree", location="naperville"),
+    Term(id=3, name="cereal", price=4.79, brand="General Mills", location="brookfield")
+]
 
-# ----- smarter endpoint: kroger price lookup -----
+locations = [
+    Location(id=1, name="chicago", description="City in Illinois"),
+    Location(id=2, name="naperville", description="Suburb of Chicago"),
+    Location(id=3, name="brookfield", description="Another suburb")
+]
+
+# ---------- SQLite Setup ----------
+SQLALCHEMY_DATABASE_URL = "sqlite:///./items.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+Base = declarative_base()
+
+# ---------- SQLAlchemy Model ----------
+
+class TermDB(Base):
+    __tablename__ = "terms"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    price = Column(String)  
+    brand = Column(String)
+    location = Column(String)
+
+Base.metadata.create_all(bind=engine)
+
+# ---------- Routes ----------
+
+@app.post("/terms/", response_model=Term)
+def create_term(term: Term):
+    with SessionLocal() as session:
+        db_term = TermDB(**term.dict())
+        session.add(db_term)
+        session.commit()
+        session.refresh(db_term)
+        #return term   
+        return Term.from_orm(db_term)
+
+
+# @app.delete("/terms", response_model=Term)
+# def delete_term(term_id: int):
+#     with SessionLocal() as session:
+#         term = session.query(TermDB).filter(TermDB.id == term_id).first()
+#         if not term:
+#             raise HTTPException(status_code=404, detail="Item not found")
+#         session.delete(term)
+#         session.commit()
+#         return term
+    
+@app.delete("/terms/{term_id}", response_model=Term)
+def delete_term(term_id: int):
+    with SessionLocal() as session:
+        term_db = session.query(TermDB).filter(TermDB.id == term_id).first()
+        if not term_db:
+            raise HTTPException(status_code=404, detail="Item not found")
+        session.delete(term_db)
+        session.commit()
+        return Term.from_orm(term_db)
+
+
+
+@app.get("/brands", response_model=List[Brand])
+def get_brands():
+    return brands
+
+# @app.get("/terms", response_model=List[Term])
+# def get_terms():
+#     return terms
+
+@app.get("/terms", response_model=List[Term])
+def get_terms():
+    with SessionLocal() as session:
+        db_terms = session.query(TermDB).all()
+        return [Term.from_orm(t) for t in db_terms]
+
+
+@app.get("/locations", response_model=List[Location])
+def get_locations():
+    return locations
+
 @app.get("/item-prices")
 def get_item_prices():
     cid = os.getenv("KROGER_CLIENT_ID")
-    cs  = os.getenv("KROGER_CLIENT_SECRET")
+    cs = os.getenv("KROGER_CLIENT_SECRET")
     if not cid or not cs:
-        raise HTTPException(500, "missing kroger creds")
+        raise HTTPException(500, "Missing Kroger credentials")
 
-    # get bearer token (certification env)
     creds = base64.b64encode(f"{cid}:{cs}".encode()).decode()
     token_resp = requests.post(
         "https://api-ce.kroger.com/v1/connect/oauth2/token",
@@ -76,16 +147,15 @@ def get_item_prices():
     token = token_resp.json().get("access_token")
 
     results = []
-    for it in items:
+    for it in terms:
         pr = requests.get(
             "https://api-ce.kroger.com/v1/products",
             headers={"Authorization": f"Bearer {token}"},
-            params={"filter.term": it["name"], "filter.limit": 1}
+            params={"filter.term": it.name, "filter.limit": 1}
         )
         pr.raise_for_status()
         data = pr.json().get("data", [])
 
-        # safe‐extract price
         kroger_price = None
         if data:
             first = data[0]
@@ -96,8 +166,8 @@ def get_item_prices():
                     kroger_price = price_block["regular"].get("amount")
 
         results.append({
-            "name":         it["name"],
-            "your_price":   it.get("price"),
+            "name": it.name,
+            "your_price": it.price,
             "kroger_price": kroger_price
         })
 
