@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy import Column, Integer, String, Float, create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 import os, requests, base64
@@ -17,7 +17,7 @@ class Brand(BaseModel):
     name: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Term(BaseModel):
     id: int
@@ -27,7 +27,7 @@ class Term(BaseModel):
     location: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Location(BaseModel):
     id: int
@@ -35,7 +35,23 @@ class Location(BaseModel):
     description: Optional[str] = ""
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+class TermCreate(BaseModel):  # For input (POST)
+    name: str
+    price: float
+    brand: str
+    location: str
+
+    class Config:
+        from_attributes = True
+
+class TermRead(TermCreate):  # For output
+    id: int
+
+
+
+# --------- In-Memory Data ---------
 
 brands = [
     Brand(id=1, name="Kroger"),
@@ -56,6 +72,7 @@ locations = [
 ]
 
 # ---------- SQLite Setup ----------
+
 SQLALCHEMY_DATABASE_URL = "sqlite:///./items.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -67,7 +84,7 @@ class TermDB(Base):
     __tablename__ = "terms"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
-    price = Column(String)  
+    price = Column(Float)
     brand = Column(String)
     location = Column(String)
 
@@ -75,27 +92,15 @@ Base.metadata.create_all(bind=engine)
 
 # ---------- Routes ----------
 
-@app.post("/terms/", response_model=Term)
-def create_term(term: Term):
+@app.post("/terms/", response_model=TermRead)
+def create_term(term: TermCreate):
     with SessionLocal() as session:
-        db_term = TermDB(**term.dict())
+        db_term = TermDB(**term.model_dump())
         session.add(db_term)
         session.commit()
         session.refresh(db_term)
-        #return term   
-        return Term.from_orm(db_term)
+        return TermRead.model_validate(db_term)
 
-
-# @app.delete("/terms", response_model=Term)
-# def delete_term(term_id: int):
-#     with SessionLocal() as session:
-#         term = session.query(TermDB).filter(TermDB.id == term_id).first()
-#         if not term:
-#             raise HTTPException(status_code=404, detail="Item not found")
-#         session.delete(term)
-#         session.commit()
-#         return term
-    
 @app.delete("/terms/{term_id}", response_model=Term)
 def delete_term(term_id: int):
     with SessionLocal() as session:
@@ -104,35 +109,28 @@ def delete_term(term_id: int):
             raise HTTPException(status_code=404, detail="Item not found")
         session.delete(term_db)
         session.commit()
-        return Term.from_orm(term_db)
+        return Term.model_validate(term_db)
 
-
-
-@app.get("/brands", response_model=List[Brand])
+@app.get("/brands/", response_model=List[Brand])
 def get_brands():
     return brands
 
-# @app.get("/terms", response_model=List[Term])
-# def get_terms():
-#     return terms
-
-@app.get("/terms", response_model=List[Term])
+@app.get("/terms/", response_model=List[Term])
 def get_terms():
     with SessionLocal() as session:
         db_terms = session.query(TermDB).all()
-        return [Term.from_orm(t) for t in db_terms]
+        return [Term.model_validate(t) for t in db_terms]
 
-
-@app.get("/locations", response_model=List[Location])
+@app.get("/locations/", response_model=List[Location])
 def get_locations():
     return locations
 
-@app.get("/item-prices")
+@app.get("/item-prices/")
 def get_item_prices():
     cid = os.getenv("KROGER_CLIENT_ID")
     cs = os.getenv("KROGER_CLIENT_SECRET")
     if not cid or not cs:
-        raise HTTPException(500, "Missing Kroger credentials")
+        raise HTTPException(500, "Missing Kroger API credentials in environment variables")
 
     creds = base64.b64encode(f"{cid}:{cs}".encode()).decode()
     token_resp = requests.post(
@@ -172,3 +170,5 @@ def get_item_prices():
         })
 
     return results
+
+
