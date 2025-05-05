@@ -1,0 +1,35 @@
+body {
+  background-color: #f8f9fa; /* Light gray background */
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.navbar {
+  border-bottom: 1px solid #dee2e6;
+}
+
+.nav-link {
+  transition: color 0.2s ease-in-out;
+}
+
+.nav-link:hover {
+  color: #0056b3 !important; /* Darker blue on hover */
+}
+
+.container {
+  background-color: #ffffff;
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.04);
+  margin-top: 2rem;
+}
+
+textarea.form-control {
+  resize: vertical;
+}
+
+/* Feedback message */
+.feedback-success {
+  color: #28a745;
+  font-weight: 500;
+  margin-top: 0.75rem;
+}
