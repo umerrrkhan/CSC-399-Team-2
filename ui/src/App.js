@@ -1,12 +1,12 @@
 import './App.css';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Link
-} from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { Auth } from 'aws-amplify';
+
+import Login from './Login';
+import SignUp from './SignUp';
+import ConfirmSignUp from './ConfirmSignUp';
 
 function Home() {
   return (
@@ -18,10 +18,10 @@ function Home() {
 }
 
 function Search() {
-  const [items, setItems]       = useState([]);
+  const [items, setItems] = useState([]);
   const [searchText, setSearchText] = useState('');
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSearch = () => {
     if (!searchText) {
@@ -30,7 +30,7 @@ function Search() {
     }
     setError('');
     setLoading(true);
-    axios.get('/item-prices/', { params: { term: searchText } })
+    axios.get('http://localhost:8000/item-prices/', { params: { term: searchText } })
       .then(res => setItems(res.data))
       .catch(err => {
         console.error(err);
@@ -82,8 +82,8 @@ function Search() {
 function CompareGroceries() {
   const [comparisons, setComparisons] = useState([]);
 
-  React.useEffect(() => {
-    axios.get('/item-prices/', { params: { term: '' } })
+  useEffect(() => {
+    axios.get('http://localhost:8000/item-prices/', { params: { term: '' } })
       .then(res => setComparisons(res.data))
       .catch(console.error);
   }, []);
@@ -106,7 +106,7 @@ function CompareGroceries() {
 }
 
 function SubmitFeedback() {
-  const [feedback, setFeedback]   = useState('');
+  const [feedback, setFeedback] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = e => {
@@ -143,6 +143,23 @@ function SubmitFeedback() {
 }
 
 function App() {
+  const [user, setUser] = useState(null);
+
+  const handleLogin = (user) => {
+    setUser(user);
+  };
+
+  const handleLogout = async () => {
+    await Auth.signOut();
+    setUser(null);
+  };
+
+  useEffect(() => {
+    Auth.currentAuthenticatedUser()
+      .then(user => setUser(user))
+      .catch(() => setUser(null));
+  }, []);
+
   return (
     <Router>
       <nav className="navbar navbar-expand-lg navbar-light bg-light shadow-sm mb-4 px-4">
@@ -151,14 +168,20 @@ function App() {
           <Link className="nav-link" to="/search">Search</Link>
           <Link className="nav-link" to="/compare">Compare</Link>
           <Link className="nav-link" to="/feedback">Feedback</Link>
+          {!user && <Link className="nav-link" to="/signup">Sign Up</Link>}
+          {!user && <Link className="nav-link" to="/login">Login</Link>}
+          {user && <span className="nav-link" style={{ cursor: 'pointer' }} onClick={handleLogout}>Logout</span>}
         </div>
       </nav>
 
       <Routes>
-        <Route path="/"      element={<Home />} />
-        <Route path="/search"  element={<Search />} />
+        <Route path="/" element={<Home />} />
+        <Route path="/search" element={<Search />} />
         <Route path="/compare" element={<CompareGroceries />} />
         <Route path="/feedback" element={<SubmitFeedback />} />
+        <Route path="/signup" element={<SignUp />} />
+        <Route path="/login" element={<Login onLogin={handleLogin} />} />
+        <Route path="/confirm" element={<ConfirmSignUp />} />
       </Routes>
     </Router>
   );
