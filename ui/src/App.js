@@ -8,11 +8,13 @@ import Login from './Login';
 import SignUp from './SignUp';
 import ConfirmSignUp from './ConfirmSignUp';
 
-function Home() {
+function Home({ user }) {
   return (
     <div className="container mt-5 text-center">
       <h1 className="display-4 text-primary">🧺 Market Basket</h1>
-      <p className="lead">Track and compare grocery prices across locations.</p>
+      <p className="lead">
+        {user ? `Welcome, ${user.attributes.name}!` : 'Track and compare grocery prices across locations.'}
+      </p>
     </div>
   );
 }
@@ -64,9 +66,7 @@ function Search() {
         {items.length > 0 ? (
           items.map((it, i) => (
             <li key={i} className="list-group-item">
-              <strong>{it.name}</strong> — Kroger: {it.kroger_price != null
-                ? `$${it.kroger_price}`
-                : 'N/A'}
+              <strong>{it.name}</strong> — Kroger: {it.kroger_price != null ? `$${it.kroger_price}` : 'N/A'}
             </li>
           ))
         ) : (
@@ -95,9 +95,7 @@ function CompareGroceries() {
         {comparisons.map((item, idx) => (
           <li key={idx} className="list-group-item">
             <strong>{item.name}</strong><br />
-            Kroger: {item.kroger_price != null
-              ? `$${item.kroger_price}`
-              : 'N/A'}
+            Kroger: {item.kroger_price != null ? `$${item.kroger_price}` : 'N/A'}
           </li>
         ))}
       </ul>
@@ -175,7 +173,7 @@ function App() {
       </nav>
 
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<Home user={user} />} />
         <Route path="/search" element={<Search />} />
         <Route path="/compare" element={<CompareGroceries />} />
         <Route path="/feedback" element={<SubmitFeedback />} />
