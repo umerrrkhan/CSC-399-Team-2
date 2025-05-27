@@ -162,14 +162,19 @@ function App() {
     <Router>
       <nav className="navbar navbar-expand-lg navbar-light bg-light shadow-sm mb-4 px-4">
         <Link className="navbar-brand" to="/">Market Basket</Link>
-        <div className="navbar-nav">
+        <div className="navbar-nav me-auto">
           <Link className="nav-link" to="/search">Search</Link>
           <Link className="nav-link" to="/compare">Compare</Link>
           <Link className="nav-link" to="/feedback">Feedback</Link>
           {!user && <Link className="nav-link" to="/signup">Sign Up</Link>}
           {!user && <Link className="nav-link" to="/login">Login</Link>}
-          {user && <span className="nav-link" style={{ cursor: 'pointer' }} onClick={handleLogout}>Logout</span>}
         </div>
+        {user && (
+          <div className="d-flex align-items-center">
+            <span className="me-3 fw-bold">Welcome, {user.attributes.name}</span>
+            <button className="btn btn-outline-danger" onClick={handleLogout}>Logout</button>
+          </div>
+        )}
       </nav>
 
       <Routes>
