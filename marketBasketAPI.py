@@ -145,12 +145,53 @@ def get_item_prices(term: Optional[str] = None, user_id: Optional[str] = None):
     if not term:
         raise HTTPException(status_code=400, detail="Query param `term` is required")
 
-    # save the search
+    # Save the search term
     if user_id:
         with SessionLocal() as session:
             search = UserSearch(user_id=user_id, search_term=term)
             session.add(search)
             session.commit()
+
+    # Load Kroger credentials
+    cid = os.getenv("KROGER_CLIENT_ID")
+    cs  = os.getenv("KROGER_CLIENT_SECRET")
+    if not cid or not cs:
+        raise HTTPException(status_code=500, detail="Missing Kroger API credentials")
+
+    # Get OAuth token
+    creds = base64.b64encode(f"{cid}:{cs}".encode()).decode()
+    token_resp = requests.post(
+        "https://api-ce.kroger.com/v1/connect/oauth2/token",
+        headers={
+            "Authorization": f"Basic {creds}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        },
+        data={"grant_type": "client_credentials", "scope": "product.compact"}
+    )
+    token_resp.raise_for_status()
+    token = token_resp.json().get("access_token")
+
+    # Query Kroger products
+    pr = requests.get(
+        "https://api-ce.kroger.com/v1/products",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"filter.term": term, "filter.limit": 10}
+    )
+    pr.raise_for_status()
+    data = pr.json().get("data", [])
+
+    results = []
+    for item in data:
+        name = item.get("description") or term
+        price_block = item.get("items", [{}])[0].get("price", {})
+        kroger_price = price_block.get("regular", {}).get("amount")
+        results.append({
+            "name": name,
+            "kroger_price": kroger_price
+        })
+
+    return results
+
 
 @app.get("/recommendations/")
 def get_recommendations(user_id: str):
@@ -180,44 +221,3 @@ def get_recommendations(user_id: str):
 
         return [Term.model_validate(r) for r in recommendations]
 
-
-    cid = os.getenv("KROGER_CLIENT_ID")
-    cs  = os.getenv("KROGER_CLIENT_SECRET")
-    if not cid or not cs:
-        raise HTTPException(status_code=500, detail="Missing Kroger API credentials")
-
-    # fetch OAuth token
-    creds = base64.b64encode(f"{cid}:{cs}".encode()).decode()
-    token_resp = requests.post(
-        "https://api-ce.kroger.com/v1/connect/oauth2/token",
-        headers={
-            "Authorization": f"Basic {creds}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        },
-        data={"grant_type": "client_credentials", "scope": "product.compact"}
-    )
-    token_resp.raise_for_status()
-    token = token_resp.json().get("access_token")
-
-
-
-    # query Kroger products
-    pr = requests.get(
-        "https://api-ce.kroger.com/v1/products",
-        headers={"Authorization": f"Bearer {token}"},
-        params={"filter.term": term, "filter.limit": 10}
-    )
-    pr.raise_for_status()
-    data = pr.json().get("data", [])
-
-    results = []
-    for item in data:
-        name        = item.get("description") or term
-        price_block = item.get("items", [{}])[0].get("price", {})
-        kroger_price = price_block.get("regular", {}).get("amount")
-        results.append({
-            "name": name,
-            "kroger_price": kroger_price
-        })
-
-    return results
