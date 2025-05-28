@@ -97,6 +97,12 @@ class TermDB(Base):
     brand    = Column(String)
     location = Column(String)
 
+class UserSearch(Base):
+    __tablename__ = "user_searches"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)  # can adjust type depending on how we track users
+    search_term = Column(String)
+
 Base.metadata.create_all(bind=engine)
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -135,9 +141,45 @@ def get_locations():
     return locations
 
 @app.get("/item-prices/")
-def get_item_prices(term: Optional[str] = None):
+def get_item_prices(term: Optional[str] = None, user_id: Optional[str] = None):
     if not term:
         raise HTTPException(status_code=400, detail="Query param `term` is required")
+
+    # save the search
+    if user_id:
+        with SessionLocal() as session:
+            search = UserSearch(user_id=user_id, search_term=term)
+            session.add(search)
+            session.commit()
+
+@app.get("/recommendations/")
+def get_recommendations(user_id: str):
+    with SessionLocal() as session:
+        searches = (
+            session.query(UserSearch.search_term)
+            .filter(UserSearch.user_id == user_id)
+            .order_by(UserSearch.id.desc())
+            .limit(5)
+            .all()
+        )
+        
+        search_terms = [s[0] for s in searches]
+        if not search_terms:
+            return {"message": "No recent searches to recommend from."}
+
+        # use search terms to return matching products
+        recommendations = []
+        for term in search_terms:
+            term_matches = (
+                session.query(TermDB)
+                .filter(TermDB.name.ilike(f"%{term}%"))
+                .limit(3)
+                .all()
+            )
+            recommendations.extend(term_matches)
+
+        return [Term.model_validate(r) for r in recommendations]
+
 
     cid = os.getenv("KROGER_CLIENT_ID")
     cs  = os.getenv("KROGER_CLIENT_SECRET")
@@ -156,6 +198,8 @@ def get_item_prices(term: Optional[str] = None):
     )
     token_resp.raise_for_status()
     token = token_resp.json().get("access_token")
+
+
 
     # query Kroger products
     pr = requests.get(
