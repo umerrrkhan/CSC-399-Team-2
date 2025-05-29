@@ -80,10 +80,10 @@ function Home({ user }) {
             <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <CardContent>
                 <Typography variant="h6" gutterBottom>
-                  📊 Compare Prices
+                  📊 Recommended Items
                 </Typography>
                 <Typography variant="body2" color="textSecondary">
-                  See side-by-side price comparisons for multiple grocery items.
+                  See multiple item recommmendations for your favorite grocery items.
                 </Typography>
               </CardContent>
               <CardActions sx={{ mt: 'auto' }}>
@@ -196,7 +196,7 @@ function CompareGroceries() {
   return (
     <Container sx={{ mt: 4 }}>
       <Typography variant="h4" gutterBottom>
-        Compare Grocery Prices
+        See Recommended Grocery Items
       </Typography>
       <List>
         {comparisons.map((item, idx) => (
@@ -273,7 +273,7 @@ function App() {
             🧺 Market Basket
           </Typography>
           <Button component={Link} to="/search" color="inherit">Search</Button>
-          <Button component={Link} to="/compare" color="inherit">Compare</Button>
+          <Button component={Link} to="/compare" color="inherit">Recommended Items</Button>
           <Button component={Link} to="/feedback" color="inherit">Feedback</Button>
           {!user && (
             <>
