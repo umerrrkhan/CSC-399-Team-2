@@ -149,25 +149,23 @@ def get_terms():
 def get_locations():
     return locations
 
-
 @app.get("/item-prices/")
-def get_item_prices(term: str = Query(...), zipcode: str = Query(...)):
-    if not term or not zipcode:
-        raise HTTPException(status_code=400, detail="Query parameters 'term' and 'zipcode' are required")
+def get_item_prices(term: str = Query(...), zipcode: Optional[str] = Query(None)):
+    if not term:
+        raise HTTPException(status_code=400, detail="Query parameter 'term' is required")
 
     token = get_kroger_token()
 
-    # get nearest store's location ID
-    location_id = get_nearest_location_id(token, zipcode)
-    if not location_id:
-        raise HTTPException(status_code=404, detail="No Kroger locations found near this ZIP code. Please try another ZIP code!")
-
-    # set up product search query
     params = {
         "filter.term": term,
-        "filter.locationId": location_id,
         "filter.limit": 10
     }
+
+    if zipcode:
+        location_id = get_nearest_location_id(token, zipcode)
+        if not location_id:
+            raise HTTPException(status_code=404, detail="No Kroger locations found near this ZIP code. Please try another ZIP code!")
+        params["filter.locationId"] = location_id
 
     # product search
     try:
@@ -178,32 +176,32 @@ def get_item_prices(term: str = Query(...), zipcode: str = Query(...)):
         )
         product_resp.raise_for_status()
     except requests.HTTPError as e:
-        print(f"Error from Kroger API for locationId {location_id}: {e}")
-        raise HTTPException(status_code=500, detail="No Kroger locations found near this ZIP code. " \
-        "Please try another ZIP code!")
+        print(f"Error from Kroger API: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve product data from Kroger API.")
 
     data = product_resp.json().get("data", [])
 
-    # extract name and price
+    # extract name and price (only if location is provided)
     results = []
     for item in data:
         name = item.get("description", term)
-        item_details = item.get("items", [])
-
         kroger_price = None
-        for detail in item_details:
-            price = detail.get("price", {})
-            kroger_price = (
-                price.get("regular") or
-                price.get("promo") or
-                price.get("discounted")
-            )
-            if kroger_price:
-                break
+
+        if zipcode:
+            item_details = item.get("items", [])
+            for detail in item_details:
+                price = detail.get("price", {})
+                kroger_price = (
+                    price.get("regular") or
+                    price.get("promo") or
+                    price.get("discounted")
+                )
+                if kroger_price:
+                    break
 
         results.append({
             "name": name,
-            "kroger_price": kroger_price
+            "kroger_price": kroger_price  # Will be None if no zipcode
         })
 
     return results
