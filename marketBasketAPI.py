@@ -5,23 +5,25 @@ from typing import List, Optional
 from sqlalchemy import Column, Integer, String, Float, create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
-import os, requests, base64
+import os
+import requests
+import base64
+from fastapi import Query
 
 load_dotenv()
 
 app = FastAPI()
 
-# ─── Enable CORS ───────────────────────────────────────────────────────────────
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],            # change to your domain in production
+    allow_origins=["*"],  # Change to your domain in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ─── Pydantic Models ────────────────────────────────────────────────────────────
-
+# Pydantic Models
 class Brand(BaseModel):
     id: int
     name: str
@@ -59,8 +61,7 @@ class TermCreate(BaseModel):
 class TermRead(TermCreate):
     id: int
 
-# ─── In-Memory Data ─────────────────────────────────────────────────────────────
-
+# In-Memory Data
 brands = [
     Brand(id=1, name="Kroger"),
     Brand(id=2, name="Degree"),
@@ -79,13 +80,9 @@ locations = [
     Location(id=3, name="brookfield", description="Another suburb")
 ]
 
-# ─── SQLite Setup ──────────────────────────────────────────────────────────────
-
+# SQLite Setup
 SQLALCHEMY_DATABASE_URL = "sqlite:///./items.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False}
-)
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -97,16 +94,28 @@ class TermDB(Base):
     brand    = Column(String)
     location = Column(String)
 
-class UserSearch(Base):
-    __tablename__ = "user_searches"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True)  # can adjust type depending on how we track users
-    search_term = Column(String)
-
 Base.metadata.create_all(bind=engine)
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+# Helper Function to Get Kroger Token
+def get_kroger_token():
+    cid = os.getenv("KROGER_CLIENT_ID")
+    cs = os.getenv("KROGER_CLIENT_SECRET")
+    if not cid or not cs:
+        raise HTTPException(status_code=500, detail="Missing Kroger API credentials")
 
+    creds = base64.b64encode(f"{cid}:{cs}".encode()).decode()
+    token_resp = requests.post(
+        "https://api-ce.kroger.com/v1/connect/oauth2/token",
+        headers={
+            "Authorization": f"Basic {creds}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        },
+        data={"grant_type": "client_credentials", "scope": "product.compact"}
+    )
+    token_resp.raise_for_status()
+    return token_resp.json().get("access_token")
+
+# Routes
 @app.post("/terms/", response_model=TermRead)
 def create_term(term: TermCreate):
     with SessionLocal() as session:
@@ -140,51 +149,58 @@ def get_terms():
 def get_locations():
     return locations
 
+
 @app.get("/item-prices/")
-def get_item_prices(term: Optional[str] = None, user_id: Optional[str] = None):
-    if not term:
-        raise HTTPException(status_code=400, detail="Query param `term` is required")
+def get_item_prices(term: str = Query(...), zipcode: str = Query(...)):
+    if not term or not zipcode:
+        raise HTTPException(status_code=400, detail="Query parameters 'term' and 'zipcode' are required")
 
-    # Save the search term
-    if user_id:
-        with SessionLocal() as session:
-            search = UserSearch(user_id=user_id, search_term=term)
-            session.add(search)
-            session.commit()
+    token = get_kroger_token()
 
-    # Load Kroger credentials
-    cid = os.getenv("KROGER_CLIENT_ID")
-    cs  = os.getenv("KROGER_CLIENT_SECRET")
-    if not cid or not cs:
-        raise HTTPException(status_code=500, detail="Missing Kroger API credentials")
+    # get nearest store's location ID
+    location_id = get_nearest_location_id(token, zipcode)
+    if not location_id:
+        raise HTTPException(status_code=404, detail="No Kroger locations found near this ZIP code. Please try another ZIP code!")
 
-    # Get OAuth token
-    creds = base64.b64encode(f"{cid}:{cs}".encode()).decode()
-    token_resp = requests.post(
-        "https://api-ce.kroger.com/v1/connect/oauth2/token",
-        headers={
-            "Authorization": f"Basic {creds}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        },
-        data={"grant_type": "client_credentials", "scope": "product.compact"}
-    )
-    token_resp.raise_for_status()
-    token = token_resp.json().get("access_token")
+    # set up product search query
+    params = {
+        "filter.term": term,
+        "filter.locationId": location_id,
+        "filter.limit": 10
+    }
 
-    # Query Kroger products
-    pr = requests.get(
-        "https://api-ce.kroger.com/v1/products",
-        headers={"Authorization": f"Bearer {token}"},
-        params={"filter.term": term, "filter.limit": 10}
-    )
-    pr.raise_for_status()
-    data = pr.json().get("data", [])
+    # product search
+    try:
+        product_resp = requests.get(
+            "https://api-ce.kroger.com/v1/products",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params
+        )
+        product_resp.raise_for_status()
+    except requests.HTTPError as e:
+        print(f"Error from Kroger API for locationId {location_id}: {e}")
+        raise HTTPException(status_code=500, detail="No Kroger locations found near this ZIP code. " \
+        "Please try another ZIP code!")
 
+    data = product_resp.json().get("data", [])
+
+    # extract name and price
     results = []
     for item in data:
-        name = item.get("description") or term
-        price_block = item.get("items", [{}])[0].get("price", {})
-        kroger_price = price_block.get("regular", {}).get("amount")
+        name = item.get("description", term)
+        item_details = item.get("items", [])
+
+        kroger_price = None
+        for detail in item_details:
+            price = detail.get("price", {})
+            kroger_price = (
+                price.get("regular") or
+                price.get("promo") or
+                price.get("discounted")
+            )
+            if kroger_price:
+                break
+
         results.append({
             "name": name,
             "kroger_price": kroger_price
@@ -193,31 +209,36 @@ def get_item_prices(term: Optional[str] = None, user_id: Optional[str] = None):
     return results
 
 
-@app.get("/recommendations/")
-def get_recommendations(user_id: str):
-    with SessionLocal() as session:
-        searches = (
-            session.query(UserSearch.search_term)
-            .filter(UserSearch.user_id == user_id)
-            .order_by(UserSearch.id.desc())
-            .limit(5)
-            .all()
-        )
-        
-        search_terms = [s[0] for s in searches]
-        if not search_terms:
-            return {"message": "No recent searches to recommend from."}
+@app.get("/kroger-locations/")
+def get_kroger_locations(zipcode: str):
+    token = get_kroger_token()
+    resp = requests.get(
+        "https://api-ce.kroger.com/v1/locations",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"filter.zipCode.near": zipcode, "filter.limit": 5}
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
+    return [
+        {
+            "name": loc.get("name"),
+            "locationId": loc.get("locationId"),
+            "address": loc.get("address", {}).get("addressLine1", ""),
+            "city": loc.get("address", {}).get("city", "")
+        }
+        for loc in data
+    ]
 
-        # use search terms to return matching products
-        recommendations = []
-        for term in search_terms:
-            term_matches = (
-                session.query(TermDB)
-                .filter(TermDB.name.ilike(f"%{term}%"))
-                .limit(3)
-                .all()
-            )
-            recommendations.extend(term_matches)
+def get_nearest_location_id(token: str, zipcode: str) -> Optional[str]:
+    location_resp = requests.get(
+        "https://api-ce.kroger.com/v1/locations",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"filter.zipCode.near": zipcode, "filter.limit": 1}
+    )
+    location_resp.raise_for_status()
+    locations = location_resp.json().get("data", [])
+    if not locations:
+        return None
+    return locations[0].get("locationId")
 
-        return [Term.model_validate(r) for r in recommendations]
 
