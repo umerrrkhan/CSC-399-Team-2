@@ -1,21 +1,126 @@
-import './App.css';
+// App.js
 import React, { useEffect, useState } from 'react';
+import { Routes, Route, Link } from 'react-router-dom';
 import axios from 'axios';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Auth } from 'aws-amplify';
+import {
+  AppBar,
+  Toolbar,
+  Typography,
+  Button,
+  Container,
+  Box,
+  Grid,
+  Card,
+  CardContent,
+  CardActions,
+  TextField,
+  CircularProgress,
+  Alert,
+  List,
+  ListItem,
+  ListItemText
+} from '@mui/material';
 
-import Login from './Login';
 import SignUp from './SignUp';
+import Login from './Login';
 import ConfirmSignUp from './ConfirmSignUp';
 
 function Home({ user }) {
   return (
-    <div className="container mt-5 text-center">
-      <h1 className="display-4 text-primary">🧺 Market Basket</h1>
-      <p className="lead">
-        {user ? `Welcome, ${user.attributes.name}!` : 'Track and compare grocery prices across locations.'}
-      </p>
-    </div>
+    <Box>
+      {/* Hero Intro */}
+      <Container sx={{ textAlign: 'center', py: 8 }}>
+        <Typography variant="h2" color="primary" gutterBottom>
+          🧺 Market Basket
+        </Typography>
+        <Typography variant="h5" color="textSecondary" paragraph>
+          Simplify your grocery shopping with real-time price tracking and side-by-side comparisons.
+        </Typography>
+        {user ? (
+          <Typography variant="h6">Welcome back, {user.attributes.name}!</Typography>
+        ) : (
+          <Button
+            variant="contained"
+            size="large"
+            component={Link}
+            to="/signup"
+            sx={{ mt: 3 }}
+          >
+            Get Started
+          </Button>
+        )}
+      </Container>
+
+      {/* Beta Services */}
+      <Container sx={{ py: 6 }}>
+        <Typography variant="h4" align="center" gutterBottom>
+          Our Services [BETA]
+        </Typography>
+        <Grid container spacing={4} justifyContent="center">
+          <Grid item xs={12} sm={6} md={4}>
+            <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  🔍 Search Prices
+                </Typography>
+                <Typography variant="body2" color="textSecondary">
+                  Quickly find the latest item prices at Kroger by keyword.
+                </Typography>
+              </CardContent>
+              <CardActions sx={{ mt: 'auto' }}>
+                <Button size="small" component={Link} to="/search">
+                  Learn More
+                </Button>
+              </CardActions>
+            </Card>
+          </Grid>
+          
+          <Grid item xs={12} sm={6} md={4}>
+            <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  📊 Compare Prices
+                </Typography>
+                <Typography variant="body2" color="textSecondary">
+                  See side-by-side price comparisons for multiple grocery items.
+                </Typography>
+              </CardContent>
+              <CardActions sx={{ mt: 'auto' }}>
+                <Button size="small" component={Link} to="/compare">
+                  Learn More
+                </Button>
+              </CardActions>
+            </Card>
+          </Grid>
+          
+          <Grid item xs={12} sm={6} md={4}>
+            <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  💬 Submit Feedback
+                </Typography>
+                <Typography variant="body2" color="textSecondary">
+                  Let us know what you think and help shape Market Basket’s next features.
+                </Typography>
+              </CardContent>
+              <CardActions sx={{ mt: 'auto' }}>
+                <Button size="small" component={Link} to="/feedback">
+                  Learn More
+                </Button>
+              </CardActions>
+            </Card>
+          </Grid>
+        </Grid>
+      </Container>
+
+      {/* Footer */}
+      <Box sx={{ py: 3, textAlign: 'center', bgcolor: 'background.paper' }}>
+        <Typography variant="body2" color="textSecondary">
+          © 2025 Market Basket. All rights reserved.
+        </Typography>
+      </Box>
+    </Box>
   );
 }
 
@@ -32,50 +137,49 @@ function Search() {
     }
     setError('');
     setLoading(true);
-    axios.get('http://localhost:8000/item-prices/', { params: { term: searchText } })
+    axios
+      .get('http://localhost:8000/item-prices/', { params: { term: searchText } })
       .then(res => setItems(res.data))
-      .catch(err => {
-        console.error(err);
-        setError('Failed to fetch data.');
-      })
+      .catch(() => setError('Failed to fetch data.'))
       .finally(() => setLoading(false));
   };
 
   return (
-    <div className="container mt-4">
-      <h2 className="mb-3">Search Kroger</h2>
-      <div className="input-group mb-3">
-        <input
-          type="text"
-          className="form-control"
+    <Container sx={{ mt: 4 }}>
+      <Typography variant="h4" gutterBottom>
+        Search Kroger
+      </Typography>
+      <Box sx={{ display: 'flex', mb: 2 }}>
+        <TextField
+          fullWidth
+          variant="outlined"
           placeholder="e.g. apples"
           value={searchText}
           onChange={e => setSearchText(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSearch()}
         />
-        <button
-          className="btn btn-primary"
-          onClick={handleSearch}
-          disabled={loading}
-        >
-          {loading ? 'Searching…' : 'Search'}
-        </button>
-      </div>
-      {error && <div className="text-danger mb-3">{error}</div>}
-      <ul className="list-group">
+        <Button variant="contained" sx={{ ml: 2 }} onClick={handleSearch} disabled={loading}>
+          {loading ? <CircularProgress size={24} /> : 'Search'}
+        </Button>
+      </Box>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      <List>
         {items.length > 0 ? (
           items.map((it, i) => (
-            <li key={i} className="list-group-item">
-              <strong>{it.name}</strong> — Kroger: {it.kroger_price != null ? `$${it.kroger_price}` : 'N/A'}
-            </li>
+            <ListItem key={i} divider>
+              <ListItemText
+                primary={it.name}
+                secondary={`Kroger: ${it.kroger_price != null ? `$${it.kroger_price}` : 'N/A'}`}
+              />
+            </ListItem>
           ))
         ) : (
-          <li className="list-group-item text-muted">
-            {loading ? 'Loading…' : 'No results; try another term.'}
-          </li>
+          <ListItem>
+            <ListItemText primary={loading ? 'Loading…' : 'No results; try another term.'} />
+          </ListItem>
         )}
-      </ul>
-    </div>
+      </List>
+    </Container>
   );
 }
 
@@ -83,23 +187,28 @@ function CompareGroceries() {
   const [comparisons, setComparisons] = useState([]);
 
   useEffect(() => {
-    axios.get('http://localhost:8000/item-prices/', { params: { term: '' } })
+    axios
+      .get('http://localhost:8000/item-prices/', { params: { term: '' } })
       .then(res => setComparisons(res.data))
-      .catch(console.error);
+      .catch(() => {});
   }, []);
 
   return (
-    <div className="container mt-4">
-      <h2 className="mb-3">Compare Grocery Prices</h2>
-      <ul className="list-group">
+    <Container sx={{ mt: 4 }}>
+      <Typography variant="h4" gutterBottom>
+        Compare Grocery Prices
+      </Typography>
+      <List>
         {comparisons.map((item, idx) => (
-          <li key={idx} className="list-group-item">
-            <strong>{item.name}</strong><br />
-            Kroger: {item.kroger_price != null ? `$${item.kroger_price}` : 'N/A'}
-          </li>
+          <ListItem key={idx} divider>
+            <ListItemText
+              primary={item.name}
+              secondary={`Kroger: ${item.kroger_price != null ? `$${item.kroger_price}` : 'N/A'}`}
+            />
+          </ListItem>
         ))}
-      </ul>
-    </div>
+      </List>
+    </Container>
   );
 }
 
@@ -114,68 +223,72 @@ function SubmitFeedback() {
   };
 
   return (
-    <div className="container mt-4">
-      <h2 className="mb-3">Submit Feedback</h2>
-      <form onSubmit={handleSubmit}>
-        <div className="mb-3">
-          <textarea
-            className="form-control"
-            rows="4"
-            placeholder="Your feedback here..."
-            value={feedback}
-            onChange={e => setFeedback(e.target.value)}
-            required
-          />
-        </div>
-        <button className="btn btn-primary" type="submit">
+    <Container sx={{ mt: 4, maxWidth: 600 }}>
+      <Typography variant="h4" gutterBottom>
+        Submit Feedback
+      </Typography>
+      <Box component="form" onSubmit={handleSubmit}>
+        <TextField
+          fullWidth
+          multiline
+          rows={4}
+          placeholder="Your feedback here..."
+          value={feedback}
+          onChange={e => setFeedback(e.target.value)}
+          required
+        />
+        <Button type="submit" variant="contained" sx={{ mt: 2 }}>
           Submit
-        </button>
-        {submitted && (
-          <div className="mt-3 text-success">
-            ✅ Thank you for your feedback!
-          </div>
-        )}
-      </form>
-    </div>
+        </Button>
+        {submitted && <Alert severity="success" sx={{ mt: 2 }}>✅ Thank you for your feedback!</Alert>}
+      </Box>
+    </Container>
   );
 }
 
 function App() {
   const [user, setUser] = useState(null);
 
-  const handleLogin = (user) => {
-    setUser(user);
-  };
+  useEffect(() => {
+    Auth.currentAuthenticatedUser()
+      .then(u => setUser(u))
+      .catch(() => setUser(null));
+  }, []);
 
   const handleLogout = async () => {
     await Auth.signOut();
     setUser(null);
   };
 
-  useEffect(() => {
-    Auth.currentAuthenticatedUser()
-      .then(user => setUser(user))
-      .catch(() => setUser(null));
-  }, []);
-
   return (
-    <Router>
-      <nav className="navbar navbar-expand-lg navbar-light bg-light shadow-sm mb-4 px-4">
-        <Link className="navbar-brand" to="/">Market Basket</Link>
-        <div className="navbar-nav me-auto">
-          <Link className="nav-link" to="/search">Search</Link>
-          <Link className="nav-link" to="/compare">Compare</Link>
-          <Link className="nav-link" to="/feedback">Feedback</Link>
-          {!user && <Link className="nav-link" to="/signup">Sign Up</Link>}
-          {!user && <Link className="nav-link" to="/login">Login</Link>}
-        </div>
-        {user && (
-          <div className="d-flex align-items-center">
-            <span className="me-3 fw-bold">Welcome, {user.attributes.name}</span>
-            <button className="btn btn-outline-danger" onClick={handleLogout}>Logout</button>
-          </div>
-        )}
-      </nav>
+    <>
+      <AppBar position="static" color="default" elevation={1}>
+        <Toolbar>
+          <Typography
+            variant="h6"
+            component={Link}
+            to="/"
+            sx={{ textDecoration: 'none', color: 'inherit', flexGrow: 1 }}
+          >
+            🧺 Market Basket
+          </Typography>
+          <Button component={Link} to="/search" color="inherit">Search</Button>
+          <Button component={Link} to="/compare" color="inherit">Compare</Button>
+          <Button component={Link} to="/feedback" color="inherit">Feedback</Button>
+          {!user && (
+            <>
+              <Button component={Link} to="/signup" color="inherit">Sign Up</Button>
+              <Button component={Link} to="/login" color="inherit">Login</Button>
+            </>
+          )}
+          {user && (
+            <>
+              <Typography sx={{ mx: 2 }}>{`Welcome, ${user.attributes.name}`}</Typography>
+              <Button onClick={handleLogout} color="secondary">Logout</Button>
+            </>
+          )}
+        </Toolbar>
+      </AppBar>
 
       <Routes>
         <Route path="/" element={<Home user={user} />} />
@@ -183,10 +296,10 @@ function App() {
         <Route path="/compare" element={<CompareGroceries />} />
         <Route path="/feedback" element={<SubmitFeedback />} />
         <Route path="/signup" element={<SignUp />} />
-        <Route path="/login" element={<Login onLogin={handleLogin} />} />
+        <Route path="/login" element={<Login onLogin={u => setUser(u)} />} />
         <Route path="/confirm" element={<ConfirmSignUp />} />
       </Routes>
-    </Router>
+    </>
   );
 }
 

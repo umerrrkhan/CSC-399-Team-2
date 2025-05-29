@@ -1,92 +1,75 @@
+// SignUp.js
 import React, { useState } from 'react';
 import { Auth } from 'aws-amplify';
 import { useNavigate } from 'react-router-dom';
+import { Container, TextField, Button, Typography, Alert, Box } from '@mui/material';
 
-function SignUp() {
-  const [form, setForm] = useState({
-    username: '',
-    password: '',
-    email: '',
-    name: '',
-  });
+export default function SignUp() {
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const navigate = useNavigate();
 
-  const handleChange = (e) => {
-    setForm(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
-  };
+  const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async e => {
     e.preventDefault();
     setError('');
     setSuccess('');
     try {
-      const { username, password, email, name } = form;
       await Auth.signUp({
-        username: email,
-        password,
-        attributes: {
-          email,
-          name,
-        },
+        username: form.email,
+        password: form.password,
+        attributes: { email: form.email, name: form.name }
       });
-      setSuccess('Sign up successful! Please check your email for a verification code.');
+      setSuccess('Sign up successful! Check your email for the code.');
       setTimeout(() => navigate('/confirm'), 1500);
     } catch (err) {
-      setError(err.message || 'Error signing up');
+      setError(err.message);
     }
   };
 
   return (
-    <div className="container mt-4" style={{ maxWidth: 500 }}>
-      <h2 className="mb-3">Create Account</h2>
-      <form onSubmit={handleSubmit}>
-        <div className="mb-3">
-          <label>Name</label>
-          <input
-            type="text"
-            name="name"
-            className="form-control"
-            value={form.name}
-            onChange={handleChange}
-            required
-          />
-        </div>
-        <div className="mb-3">
-          <label>Email (used as username)</label>
-          <input
-            type="email"
-            name="email"
-            className="form-control"
-            value={form.email}
-            onChange={handleChange}
-            required
-          />
-        </div>
-        <div className="mb-3">
-          <label>Password</label>
-          <input
-            type="password"
-            name="password"
-            className="form-control"
-            value={form.password}
-            onChange={handleChange}
-            required
-          />
-          <small className="text-muted">
-            Minimum 8 characters, 1 uppercase, 1 number, and 1 special character.
-          </small>
-        </div>
-        <button className="btn btn-primary" type="submit">Sign Up</button>
-      </form>
-      {error && <div className="mt-3 text-danger">❌ {error}</div>}
-      {success && <div className="mt-3 text-success">✅ {success}</div>}
-    </div>
+    <Container sx={{ mt: 4, maxWidth: 400 }}>
+      <Typography variant="h4" gutterBottom>Create Account</Typography>
+      <Box component="form" onSubmit={handleSubmit}>
+        <TextField
+          fullWidth
+          name="name"
+          label="Name"
+          variant="outlined"
+          sx={{ mb: 2 }}
+          value={form.name}
+          onChange={handleChange}
+          required
+        />
+        <TextField
+          fullWidth
+          name="email"
+          type="email"
+          label="Email"
+          variant="outlined"
+          sx={{ mb: 2 }}
+          value={form.email}
+          onChange={handleChange}
+          required
+        />
+        <TextField
+          fullWidth
+          name="password"
+          type="password"
+          label="Password"
+          variant="outlined"
+          helperText="Min 8 chars, uppercase, number & special"
+          sx={{ mb: 2 }}
+          value={form.password}
+          onChange={handleChange}
+          required
+        />
+        <Button fullWidth variant="contained" type="submit">Sign Up</Button>
+      </Box>
+      {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+      {success && <Alert severity="success" sx={{ mt: 2 }}>{success}</Alert>}
+    </Container>
   );
 }
-
-export default SignUp;
