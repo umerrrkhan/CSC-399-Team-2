@@ -9,6 +9,11 @@ import os
 import requests
 import base64
 from fastapi import Query
+import openai
+from sqlalchemy import Boolean
+from fastapi import Header, Depends
+from jose import jwt
+import requests
 
 load_dotenv()
 
@@ -61,6 +66,13 @@ class TermCreate(BaseModel):
 class TermRead(TermCreate):
     id: int
 
+class TriggerCreate(BaseModel):
+    user_id: str
+    item_name: str
+    target_price: float
+
+
+
 # In-Memory Data
 brands = [
     Brand(id=1, name="Kroger"),
@@ -94,9 +106,17 @@ class TermDB(Base):
     brand    = Column(String)
     location = Column(String)
 
+class PriceTrigger(Base):
+    __tablename__ = "price_triggers"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    item_name = Column(String)
+    target_price = Column(Float)
+    active = Column(Boolean, default=True)  # allows disabling after triggered
+
 Base.metadata.create_all(bind=engine)
 
-# Helper Function to Get Kroger Token
+# helper function to get Kroger token
 def get_kroger_token():
     cid = os.getenv("KROGER_CLIENT_ID")
     cs = os.getenv("KROGER_CLIENT_SECRET")
@@ -158,7 +178,7 @@ def get_item_prices(term: str = Query(...), zipcode: Optional[str] = Query(None)
 
     params = {
         "filter.term": term,
-        "filter.limit": 10
+        "filter.limit": 20
     }
 
     if zipcode:
@@ -177,7 +197,7 @@ def get_item_prices(term: str = Query(...), zipcode: Optional[str] = Query(None)
         product_resp.raise_for_status()
     except requests.HTTPError as e:
         print(f"Error from Kroger API: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve product data from Kroger API.")
+        raise HTTPException(status_code=500, detail="No Kroger locations found near this ZIP code. Please try another ZIP code!")
 
     data = product_resp.json().get("data", [])
 
@@ -201,7 +221,7 @@ def get_item_prices(term: str = Query(...), zipcode: Optional[str] = Query(None)
 
         results.append({
             "name": name,
-            "kroger_price": kroger_price  # Will be None if no zipcode
+            "kroger_price": kroger_price  # will be none if no zipcode
         })
 
     return results
@@ -240,3 +260,202 @@ def get_nearest_location_id(token: str, zipcode: str) -> Optional[str]:
     return locations[0].get("locationId")
 
 
+@app.get("/recommendations/")
+def get_recommendations(user_id: str):
+    with SessionLocal() as session:
+        # get last 5 search terms
+        searches = (
+            session.query(UserSearch.search_term)
+            .filter(UserSearch.user_id == user_id)
+            .order_by(UserSearch.id.desc())
+            .limit(5)
+            .all()
+        )
+
+        search_terms = [s[0] for s in searches]
+        if not search_terms:
+            return {"message": "No recent searches to recommend from."}
+
+        # prompt for openAI
+        prompt = (
+            "The user recently searched for these grocery items: "
+            f"{', '.join(search_terms)}. "
+            "Suggest 5 additional grocery items they might be interested in. "
+            "Return only a list of product names."
+        )
+
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that suggests grocery items."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=100,
+                temperature=0.7
+            )
+
+            suggestions_text = response.choices[0].message["content"]
+            # clean response (assume it's a list, bullet points, or CSV)
+            suggestions = [line.strip("- ").strip() for line in suggestions_text.splitlines() if line.strip()]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"OpenAI error: {str(e)}")
+
+        # search for those suggestions in DB to return term info
+        results = []
+        for item_name in suggestions:
+            match = (
+                session.query(TermDB)
+                .filter(TermDB.name.ilike(f"%{item_name}%"))
+                .first()
+            )
+            if match:
+                results.append(Term.model_validate(match))
+            else:
+                # include a suggestion as a fallback
+                results.append(Term(id=-1, name=item_name))
+
+        return [{"name": r.name} for r in results]
+
+@app.post("/price-triggers/")
+def create_trigger(trigger: TriggerCreate):
+    with SessionLocal() as session:
+        new_trigger = PriceTrigger(**trigger.model_dump())
+        session.add(new_trigger)
+        session.commit()
+        return {"message": "Trigger set successfully!"}
+    
+@app.get("/check-triggers/")
+def check_price_triggers():
+    with SessionLocal() as session:
+        triggers = session.query(PriceTrigger).filter(PriceTrigger.active == True).all()
+        results = []
+
+        for trig in triggers:
+            # get the current price
+            try:
+                price_info = get_item_prices(term=trig.item_name)  # modify as needed
+                current_price = float(price_info[0]["kroger_price"])
+            except:
+                continue
+
+            if current_price <= trig.target_price:
+                results.append({
+                    "user_id": trig.user_id,
+                    "item_name": trig.item_name,
+                    "current_price": current_price,
+                    "target_price": trig.target_price
+                })
+                
+                # disable trigger if only want it to fire once
+                trig.active = False
+                session.commit()
+
+        return results
+    
+
+@app.post("/login/")
+def login_and_check_triggers(Authorization: str = Header(...)):
+    if not Authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    token = Authorization.split(" ")[1]
+    claims = verify_jwt_token(token)
+
+    # You can use 'sub' as unique user_id, or 'email'
+    user_id = claims.get("sub") or claims.get("email")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Unable to determine user ID from token")
+
+    return check_user_triggers(user_id)
+
+
+def check_user_triggers(user_id: str):
+    with SessionLocal() as session:
+        triggers = (
+            session.query(PriceTrigger)
+            .filter(PriceTrigger.user_id == user_id, PriceTrigger.active == True)
+            .all()
+        )
+        results = []
+
+        for trig in triggers:
+            try:
+                price_info = get_item_prices(term=trig.item_name)
+                current_price = float(price_info[0]["kroger_price"])
+            except:
+                continue
+
+            if current_price <= trig.target_price:
+                results.append({
+                    "user_id": trig.user_id,
+                    "item_name": trig.item_name,
+                    "current_price": current_price,
+                    "target_price": trig.target_price
+                })
+
+                trig.active = False
+                session.commit()
+
+        return results
+
+COGNITO_REGION = os.getenv("COGNITO_REGION")
+COGNITO_POOL_ID = os.getenv("COGNITO_POOL_ID")
+COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
+COGNITO_ISSUER = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_POOL_ID}"
+
+# cache JWKS
+JWKS_URL = f"{COGNITO_ISSUER}/.well-known/jwks.json"
+JWKS = requests.get(JWKS_URL).json()
+
+def verify_jwt_token(token: str):
+    header = jwt.get_unverified_header(token)
+    key = next(k for k in JWKS["keys"] if k["kid"] == header["kid"])
+    try:
+        payload = jwt.decode(token, key, algorithms=["RS256"], audience=COGNITO_CLIENT_ID, issuer=COGNITO_ISSUER)
+        return payload  # includes sub, email, etc.
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# scheduler for price checking
+
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
+
+# initialize scheduler
+scheduler = BackgroundScheduler()
+
+# schedule job to run every hour
+scheduler.add_job(check_price_triggers, "interval", hours=1)
+
+# start scheduler
+scheduler.start()
+
+# shutdown cleanly on exit
+atexit.register(lambda: scheduler.shutdown())
