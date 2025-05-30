@@ -227,6 +227,9 @@ function SubmitFeedback() {
       <Typography variant="h4" gutterBottom>
         Submit Feedback
       </Typography>
+  <Typography variant="body1" gutterBottom>
+      Let us know what you think and help shape Market Basket’s next features! Feel free to leave your name and email address and we would love to get back to you!
+      </Typography>
       <Box component="form" onSubmit={handleSubmit}>
         <TextField
           fullWidth
@@ -241,6 +244,9 @@ function SubmitFeedback() {
           Submit
         </Button>
         {submitted && <Alert severity="success" sx={{ mt: 2 }}>✅ Thank you for your feedback!</Alert>}
+        <Typography variant='body2' paddingTop={2} sx={{color: '#3b3b3b'}}>
+        ⚠️ Do not leave any sensetive information in the feedback form!
+        </Typography>
       </Box>
     </Container>
   );
