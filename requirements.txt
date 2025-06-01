@@ -3,4 +3,7 @@ uvicorn
 sqlalchemy
 python-dotenv
 requests
+openai
+python-jose
+python-multipart
 pydantic
