@@ -199,6 +199,9 @@ function CompareGroceries() {
       <Typography variant="h4" gutterBottom>
         See Recommended Grocery Items
       </Typography>
+  <Typography variant="12px" gutterBottom>
+    Below are recommended items based on what you have searched for in the past
+  </Typography>
       <List>
         {comparisons.map((item, idx) => (
           <ListItem key={idx} divider>
