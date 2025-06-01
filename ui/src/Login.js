@@ -51,9 +51,7 @@ export default function Login({ onLogin }) {
           onChange={handleChange}
           required
         />
-            <Typography fontSize={16}>
-          Email and Password are Case Sensetive
-          </Typography><Typography fontSize={16}>
+        <Typography fontSize={16}>
           Email and Password are Case Sensetive
           </Typography>
         <Button fullWidth variant="contained" type="submit">Log In</Button>
