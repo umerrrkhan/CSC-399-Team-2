@@ -138,7 +138,7 @@ function Search() {
     setError('');
     setLoading(true);
     axios
-      .get('http://localhost:8000/item-prices/', { params: { term: searchText } })
+      .get('https://market-basket-api.onrender.com/item-prices/', { params: { term: searchText } })
       .then(res => setItems(res.data))
       .catch(() => setError('Failed to fetch data.'))
       .finally(() => setLoading(false));
@@ -188,8 +188,9 @@ function CompareGroceries() {
   const [comparisons, setComparisons] = useState([]);
 
   useEffect(() => {
+    
     axios
-      .get('http://localhost:8000/item-prices/', { params: { term: '' } })
+      .get('https://market-basket-api.onrender.com/item-prices/', { params: { term: '' } })
       .then(res => setComparisons(res.data))
       .catch(() => {});
   }, []);
