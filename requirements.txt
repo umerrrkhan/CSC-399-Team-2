@@ -7,3 +7,4 @@ openai
 python-jose
 python-multipart
 pydantic
+apscheduler
