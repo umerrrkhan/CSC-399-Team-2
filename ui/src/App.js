@@ -149,7 +149,7 @@ function Search() {
       <Typography variant="h4" gutterBottom>
         Search Kroger
       </Typography>
-  <Typography variant='12px' gutterBottom>Search for terms such as "Apples"</Typography>
+  <Typography fontSize={16} gutterBottom>Search for terms such as "Apples"</Typography>
       <Box sx={{ display: 'flex', mb: 2 }}>
         <TextField
           fullWidth
