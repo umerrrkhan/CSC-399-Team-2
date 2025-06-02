@@ -1,4 +1,4 @@
-# csc394-hw3 - Personal Repository
+# csc394 - Market Basket (Team 2)
 CSC 394 Final Project Market Basket tracks various items at grocery stores locations and allows the user to compare item prices across different stores and regions.
 
 ### Our render api:
