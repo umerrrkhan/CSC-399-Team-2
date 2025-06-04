@@ -57,6 +57,9 @@ function Home({ user }) {
         <Typography variant="h4" align="center" gutterBottom>
           Our Services [BETA]
         </Typography>
+        <Typography fontsize={16} gutterbottom>
+        Try the our services below
+        </Typography>
         <Grid container spacing={4} justifyContent="center">
           <Grid item xs={12} sm={6} md={4}>
             <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
