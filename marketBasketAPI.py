@@ -14,6 +14,8 @@ from sqlalchemy import Boolean
 from fastapi import Header, Depends
 from jose import jwt
 import requests
+from datetime import datetime
+from sqlalchemy import DateTime
 
 load_dotenv()
 
@@ -71,6 +73,14 @@ class TriggerCreate(BaseModel):
     item_name: str
     target_price: float
 
+class FeedbackCreate(BaseModel):
+    user_id: str
+    feedback_text: str
+    rating: Optional[int] = None
+
+class FeedbackRead(FeedbackCreate):
+    id: int
+    timestamp: datetime
 
 
 # In-Memory Data
@@ -113,6 +123,16 @@ class PriceTrigger(Base):
     item_name = Column(String)
     target_price = Column(Float)
     active = Column(Boolean, default=True)  # allows disabling after triggered
+
+# with timestamp of feedback submission
+class UserFeedback(Base):
+    __tablename__ = "user_feedback"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    feedback_text = Column(String)
+    rating = Column(Integer, nullable=True)     # can add optional rating (1–5 stars)
+    timestamp = Column(DateTime, default=datetime.utcnow)  # optional timestamp (delete if unwanted)
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -332,7 +352,7 @@ def check_price_triggers():
         results = []
 
         for trig in triggers:
-            # get the current price
+            # get current price
             try:
                 price_info = get_item_prices(term=trig.item_name)  # modify as needed
                 current_price = float(price_info[0]["kroger_price"])
@@ -362,7 +382,7 @@ def login_and_check_triggers(Authorization: str = Header(...)):
     token = Authorization.split(" ")[1]
     claims = verify_jwt_token(token)
 
-    # You can use 'sub' as unique user_id, or 'email'
+    # can use 'sub' as unique user_id, or 'email'
     user_id = claims.get("sub") or claims.get("email")
     if not user_id:
         raise HTTPException(status_code=400, detail="Unable to determine user ID from token")
@@ -417,6 +437,25 @@ def verify_jwt_token(token: str):
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
+@app.post("/feedback/")
+def submit_feedback(feedback: FeedbackCreate):
+    with SessionLocal() as session:
+        new_feedback = UserFeedback(**feedback.model_dump())
+        session.add(new_feedback)
+        session.commit()
+        return {"message": "Thank you for your feedback!"}
+    
+# admin endpoint view for feedback 
+@app.get("/feedback/", response_model=List[FeedbackRead])
+def get_all_feedback(limit: int = Query(50)):
+    with SessionLocal() as session:
+        feedback = (
+            session.query(UserFeedback)
+            .order_by(UserFeedback.timestamp.desc())
+            .limit(limit)
+            .all()
+        )
+        return feedback
 
 
 
