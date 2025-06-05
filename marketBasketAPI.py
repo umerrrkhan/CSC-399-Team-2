@@ -16,6 +16,7 @@ from jose import jwt
 import requests
 from datetime import datetime
 from sqlalchemy import DateTime
+from sqlalchemy import func
 
 load_dotenv()
 
@@ -457,7 +458,15 @@ def get_all_feedback(limit: int = Query(50)):
         )
         return feedback
 
-
+# get average rating from users
+@app.get("/feedback/average-rating/")
+def average_rating(user_id: Optional[str] = None):
+    with SessionLocal() as session:
+        query = session.query(func.avg(UserFeedback.rating))
+        if user_id:
+            query = query.filter(UserFeedback.user_id == user_id)
+        avg = query.scalar()
+        return {"average_rating": round(avg, 2) if avg else None}
 
 
 
