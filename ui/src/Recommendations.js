@@ -19,13 +19,13 @@ export default function Recommendations() {
 
   useEffect(() => {
     axios
-      .get("https://marketbasket-api.onrender.com/price-triggers/")
+      .get("https://market-basket-api.onrender.com/price-triggers/")
       .then((res) => {
         const triggers = res.data;
         return Promise.all(
           triggers.map((t) =>
             axios
-              .get("https://marketbasket-api.onrender.com/item-prices/", { params: { term: t.name } })
+              .get("https://market-basket-api.onrender.com/item-prices/", { params: { term: t.name } })
               .then((r) =>
                 r.data
                   .filter(

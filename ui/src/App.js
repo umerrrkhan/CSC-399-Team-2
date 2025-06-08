@@ -114,7 +114,7 @@ function Search() {
       setLoading(true)
       console.log('🔎 Searching for:', { term, zip: zipCode })
 
-      const response = await axios.get('https://marketbasket-api.onrender.com/item-prices/', {
+      const response = await axios.get('https://market-basket-api.onrender.com/item-prices/', {
         params: { term, zip: zipCode.trim() || undefined }
       })
 
