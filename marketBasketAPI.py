@@ -51,7 +51,10 @@ class Recommendation(BaseModel):
 def get_kroger_access_token() -> str:
     url = "https://api.kroger.com/v1/connect/oauth2/token"
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    data = {"grant_type": "client_credentials", "scope": "product.compact"}
+    data = {
+        "grant_type": "client_credentials",
+        "scope": "product.compact profile.compact"
+    }
     resp = requests.post(
         url,
         headers=headers,
