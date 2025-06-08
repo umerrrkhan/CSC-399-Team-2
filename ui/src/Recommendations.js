@@ -19,7 +19,7 @@ export default function Recommendations() {
 
   useEffect(() => {
     axios
-      .get("/https://marketbasket-api.onrender.com/price-triggers/")
+      .get("https://marketbasket-api.onrender.com/price-triggers/")
       .then((res) => {
         const triggers = res.data;
         return Promise.all(
