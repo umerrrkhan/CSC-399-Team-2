@@ -1,509 +1,154 @@
+# marketBasketAPI.py
+import os
+import requests
+import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from sqlalchemy import Column, Integer, String, Float, create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-from dotenv import load_dotenv
-import os
-import requests
-import base64
-from fastapi import Query
-import openai
-from sqlalchemy import Boolean
-from fastapi import Header, Depends
-from jose import jwt
-import requests
-from datetime import datetime
-from sqlalchemy import DateTime
-from sqlalchemy import func
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+# explicitly locate and load your .env
+dotenv_path = find_dotenv()
+load_dotenv(dotenv_path)
+print("🔑 Loaded KROGER_CLIENT_ID:", os.getenv("KROGER_CLIENT_ID"))
+print("🔑 Loaded KROGER_CLIENT_SECRET:", os.getenv("KROGER_CLIENT_SECRET"))
+
+if not (os.getenv("KROGER_CLIENT_ID") and os.getenv("KROGER_CLIENT_SECRET")):
+    raise RuntimeError("Missing Kroger credentials in .env")
 
 app = FastAPI()
-
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to your domain in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic Models
-class Brand(BaseModel):
-    id: int
+triggers: List["PriceTrigger"] = []
+next_trigger_id = 1
+
+class ItemPrice(BaseModel):
     name: str
+    kroger_price: float
 
-    class Config:
-        from_attributes = True
-
-class Term(BaseModel):
-    id: int
+class PriceTriggerIn(BaseModel):
     name: str
-    price: float
-    brand: str
-    location: str
-
-    class Config:
-        from_attributes = True
-
-class Location(BaseModel):
-    id: int
-    name: str
-    description: Optional[str] = ""
-
-    class Config:
-        from_attributes = True
-
-class TermCreate(BaseModel):
-    name: str
-    price: float
-    brand: str
-    location: str
-
-    class Config:
-        from_attributes = True
-
-class TermRead(TermCreate):
-    id: int
-
-class TriggerCreate(BaseModel):
-    user_id: str
-    item_name: str
     target_price: float
+    zip: Optional[str] = None
 
-class FeedbackCreate(BaseModel):
-    user_id: str
-    feedback_text: str
-    rating: Optional[int] = None
-
-class FeedbackRead(FeedbackCreate):
+class PriceTrigger(BaseModel):
     id: int
-    timestamp: datetime
+    name: str
+    target_price: float
+    current_price: Optional[float] = None
 
+class Recommendation(BaseModel):
+    name: str
+    kroger_price: float
 
-# In-Memory Data
-brands = [
-    Brand(id=1, name="Kroger"),
-    Brand(id=2, name="Degree"),
-    Brand(id=3, name="General Mills")
-]
-
-terms = [
-    Term(id=1, name="strawberries", price=3.49, brand="Kroger", location="chicago"),
-    Term(id=2, name="deodorant",  price=5.99, brand="Degree",  location="naperville"),
-    Term(id=3, name="cereal",     price=4.79, brand="General Mills", location="brookfield")
-]
-
-locations = [
-    Location(id=1, name="chicago",    description="City in Illinois"),
-    Location(id=2, name="naperville", description="Suburb of Chicago"),
-    Location(id=3, name="brookfield", description="Another suburb")
-]
-
-# SQLite Setup
-SQLALCHEMY_DATABASE_URL = "sqlite:///./items.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base = declarative_base()
-
-class TermDB(Base):
-    __tablename__ = "terms"
-    id       = Column(Integer, primary_key=True, index=True)
-    name     = Column(String)
-    price    = Column(Float)
-    brand    = Column(String)
-    location = Column(String)
-
-class PriceTrigger(Base):
-    __tablename__ = "price_triggers"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True)
-    item_name = Column(String)
-    target_price = Column(Float)
-    active = Column(Boolean, default=True)  # allows disabling after triggered
-
-# with timestamp of feedback submission
-class UserFeedback(Base):
-    __tablename__ = "user_feedback"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True)
-    feedback_text = Column(String)
-    rating = Column(Integer, nullable=True)     # can add optional rating (1–5 stars)
-    timestamp = Column(DateTime, default=datetime.utcnow)  # optional timestamp (delete if unwanted)
-
-
-Base.metadata.create_all(bind=engine)
-
-# helper function to get Kroger token
-def get_kroger_token():
-    cid = os.getenv("KROGER_CLIENT_ID")
-    cs = os.getenv("KROGER_CLIENT_SECRET")
-    if not cid or not cs:
-        raise HTTPException(status_code=500, detail="Missing Kroger API credentials")
-
-    creds = base64.b64encode(f"{cid}:{cs}".encode()).decode()
-    token_resp = requests.post(
-        "https://api-ce.kroger.com/v1/connect/oauth2/token",
-        headers={
-            "Authorization": f"Basic {creds}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        },
-        data={"grant_type": "client_credentials", "scope": "product.compact"}
+def get_kroger_access_token() -> str:
+    url = "https://api.kroger.com/v1/connect/oauth2/token"
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    data = {"grant_type": "client_credentials", "scope": "product.compact"}
+    resp = requests.post(
+        url,
+        headers=headers,
+        data=data,
+        auth=(os.getenv("KROGER_CLIENT_ID"), os.getenv("KROGER_CLIENT_SECRET")),
+        timeout=5
     )
-    token_resp.raise_for_status()
-    return token_resp.json().get("access_token")
+    resp.raise_for_status()
+    return resp.json()["access_token"]
 
-# Routes
-@app.post("/terms/", response_model=TermRead)
-def create_term(term: TermCreate):
-    with SessionLocal() as session:
-        db_term = TermDB(**term.model_dump())
-        session.add(db_term)
-        session.commit()
-        session.refresh(db_term)
-        return TermRead.model_validate(db_term)
-
-@app.delete("/terms/{term_id}", response_model=Term)
-def delete_term(term_id: int):
-    with SessionLocal() as session:
-        term_db = session.query(TermDB).filter(TermDB.id == term_id).first()
-        if not term_db:
-            raise HTTPException(status_code=404, detail="Item not found")
-        session.delete(term_db)
-        session.commit()
-        return Term.model_validate(term_db)
-
-@app.get("/brands/", response_model=List[Brand])
-def get_brands():
-    return brands
-
-@app.get("/terms/", response_model=List[Term])
-def get_terms():
-    with SessionLocal() as session:
-        db_terms = session.query(TermDB).all()
-        return [Term.model_validate(t) for t in db_terms]
-
-@app.get("/locations/", response_model=List[Location])
-def get_locations():
-    return locations
-
-@app.get("/item-prices/")
-def get_item_prices(term: str = Query(...), zipcode: Optional[str] = Query(None)):
-    if not term:
-        raise HTTPException(status_code=400, detail="Query parameter 'term' is required")
-
-    token = get_kroger_token()
-
-    params = {
-        "filter.term": term,
-        "filter.limit": 20
-    }
-
-    if zipcode:
-        location_id = get_nearest_location_id(token, zipcode)
-        if not location_id:
-            raise HTTPException(status_code=404, detail="No Kroger locations found near this ZIP code. Please try another ZIP code!")
-        params["filter.locationId"] = location_id
-
-    # product search
-    try:
-        product_resp = requests.get(
-            "https://api-ce.kroger.com/v1/products",
-            headers={"Authorization": f"Bearer {token}"},
-            params=params
-        )
-        product_resp.raise_for_status()
-    except requests.HTTPError as e:
-        print(f"Error from Kroger API: {e}")
-        raise HTTPException(status_code=500, detail="No Kroger locations found near this ZIP code. Please try another ZIP code!")
-
-    data = product_resp.json().get("data", [])
-
-    # extract name and price (only if location is provided)
-    results = []
-    for item in data:
-        name = item.get("description", term)
-        kroger_price = None
-
-        if zipcode:
-            item_details = item.get("items", [])
-            for detail in item_details:
-                price = detail.get("price", {})
-                kroger_price = (
-                    price.get("regular") or
-                    price.get("promo") or
-                    price.get("discounted")
-                )
-                if kroger_price:
-                    break
-
-        results.append({
-            "name": name,
-            "kroger_price": kroger_price  # will be none if no zipcode
-        })
-
-    return results
-
-
-@app.get("/kroger-locations/")
-def get_kroger_locations(zipcode: str):
-    token = get_kroger_token()
+def get_nearest_location_id(zip: str) -> Optional[str]:
+    token = get_kroger_access_token()
+    url = "https://api.kroger.com/v1/locations"
+    headers = {"Authorization": f"Bearer {token}"}
     resp = requests.get(
-        "https://api-ce.kroger.com/v1/locations",
-        headers={"Authorization": f"Bearer {token}"},
-        params={"filter.zipCode.near": zipcode, "filter.limit": 5}
+        url,
+        headers=headers,
+        params={"filter.zipCode.near": zip, "filter.limit": 1},
+        timeout=5
     )
     resp.raise_for_status()
     data = resp.json().get("data", [])
-    return [
-        {
-            "name": loc.get("name"),
-            "locationId": loc.get("locationId"),
-            "address": loc.get("address", {}).get("addressLine1", ""),
-            "city": loc.get("address", {}).get("city", "")
-        }
-        for loc in data
-    ]
+    return data[0].get("locationId") if data else None
 
-def get_nearest_location_id(token: str, zipcode: str) -> Optional[str]:
-    location_resp = requests.get(
-        "https://api-ce.kroger.com/v1/locations",
-        headers={"Authorization": f"Bearer {token}"},
-        params={"filter.zipCode.near": zipcode, "filter.limit": 1}
-    )
-    location_resp.raise_for_status()
-    locations = location_resp.json().get("data", [])
-    if not locations:
-        return None
-    return locations[0].get("locationId")
+def fetch_item_prices(term: str, zip: Optional[str]) -> List[ItemPrice]:
+    token = get_kroger_access_token()
+    url = "https://api.kroger.com/v1/products"
+    params = {"filter.term": term, "filter.limit": 20}
+    if zip:
+        loc = get_nearest_location_id(zip)
+        if loc:
+            params["filter.locationId"] = loc
+    headers = {"Authorization": f"Bearer {token}"}
 
+    resp = requests.get(url, headers=headers, params=params, timeout=5)
+    resp.raise_for_status()
+    items: List[ItemPrice] = []
+    for p in resp.json().get("data", []):
+        desc = p.get("description", "Unknown")
+        price = p.get("items", [{}])[0].get("price", {}).get("regular")
+        if price is not None:
+            items.append(ItemPrice(name=desc, kroger_price=price))
+    return items
 
-@app.get("/recommendations/")
-def get_recommendations(user_id: str):
-    with SessionLocal() as session:
-        # get last 5 search terms
-        searches = (
-            session.query(UserSearch.search_term)
-            .filter(UserSearch.user_id == user_id)
-            .order_by(UserSearch.id.desc())
-            .limit(5)
-            .all()
-        )
-
-        search_terms = [s[0] for s in searches]
-        if not search_terms:
-            return {"message": "No recent searches to recommend from."}
-
-        # prompt for openAI
-        prompt = (
-            "The user recently searched for these grocery items: "
-            f"{', '.join(search_terms)}. "
-            "Suggest 5 additional grocery items they might be interested in. "
-            "Return only a list of product names."
-        )
-
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that suggests grocery items."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=100,
-                temperature=0.7
-            )
-
-            suggestions_text = response.choices[0].message["content"]
-            # clean response (assume it's a list, bullet points, or CSV)
-            suggestions = [line.strip("- ").strip() for line in suggestions_text.splitlines() if line.strip()]
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"OpenAI error: {str(e)}")
-
-        # search for those suggestions in DB to return term info
-        results = []
-        for item_name in suggestions:
-            match = (
-                session.query(TermDB)
-                .filter(TermDB.name.ilike(f"%{item_name}%"))
-                .first()
-            )
-            if match:
-                results.append(Term.model_validate(match))
-            else:
-                # include a suggestion as a fallback
-                results.append(Term(id=-1, name=item_name))
-
-        return [{"name": r.name} for r in results]
-
-@app.post("/price-triggers/")
-def create_trigger(trigger: TriggerCreate):
-    with SessionLocal() as session:
-        new_trigger = PriceTrigger(**trigger.model_dump())
-        session.add(new_trigger)
-        session.commit()
-        return {"message": "Trigger set successfully!"}
-    
-@app.get("/check-triggers/")
-def check_price_triggers():
-    with SessionLocal() as session:
-        triggers = session.query(PriceTrigger).filter(PriceTrigger.active == True).all()
-        results = []
-
-        for trig in triggers:
-            # get current price
-            try:
-                price_info = get_item_prices(term=trig.item_name)  # modify as needed
-                current_price = float(price_info[0]["kroger_price"])
-            except:
-                continue
-
-            if current_price <= trig.target_price:
-                results.append({
-                    "user_id": trig.user_id,
-                    "item_name": trig.item_name,
-                    "current_price": current_price,
-                    "target_price": trig.target_price
-                })
-                
-                # disable trigger if only want it to fire once
-                trig.active = False
-                session.commit()
-
-        return results
-    
-
-@app.post("/login/")
-def login_and_check_triggers(Authorization: str = Header(...)):
-    if not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-
-    token = Authorization.split(" ")[1]
-    claims = verify_jwt_token(token)
-
-    # can use 'sub' as unique user_id, or 'email'
-    user_id = claims.get("sub") or claims.get("email")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="Unable to determine user ID from token")
-
-    return check_user_triggers(user_id)
-
-
-def check_user_triggers(user_id: str):
-    with SessionLocal() as session:
-        triggers = (
-            session.query(PriceTrigger)
-            .filter(PriceTrigger.user_id == user_id, PriceTrigger.active == True)
-            .all()
-        )
-        results = []
-
-        for trig in triggers:
-            try:
-                price_info = get_item_prices(term=trig.item_name)
-                current_price = float(price_info[0]["kroger_price"])
-            except:
-                continue
-
-            if current_price <= trig.target_price:
-                results.append({
-                    "user_id": trig.user_id,
-                    "item_name": trig.item_name,
-                    "current_price": current_price,
-                    "target_price": trig.target_price
-                })
-
-                trig.active = False
-                session.commit()
-
-        return results
-
-COGNITO_REGION = os.getenv("COGNITO_REGION")
-COGNITO_POOL_ID = os.getenv("COGNITO_POOL_ID")
-COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
-COGNITO_ISSUER = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_POOL_ID}"
-
-# cache JWKS
-JWKS_URL = f"{COGNITO_ISSUER}/.well-known/jwks.json"
-JWKS = requests.get(JWKS_URL).json()
-
-def verify_jwt_token(token: str):
-    header = jwt.get_unverified_header(token)
-    key = next(k for k in JWKS["keys"] if k["kid"] == header["kid"])
+@app.get("/item-prices/", response_model=List[ItemPrice])
+def get_item_prices(term: str, zip: Optional[str] = None):
     try:
-        payload = jwt.decode(token, key, algorithms=["RS256"], audience=COGNITO_CLIENT_ID, issuer=COGNITO_ISSUER)
-        return payload  # includes sub, email, etc.
+        return fetch_item_prices(term, zip)
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Kroger API error: {e}")
 
-@app.post("/feedback/")
-def submit_feedback(feedback: FeedbackCreate):
-    with SessionLocal() as session:
-        new_feedback = UserFeedback(**feedback.model_dump())
-        session.add(new_feedback)
-        session.commit()
-        return {"message": "Thank you for your feedback!"}
-    
-# admin endpoint view for feedback 
-@app.get("/feedback/", response_model=List[FeedbackRead])
-def get_all_feedback(limit: int = Query(50)):
-    with SessionLocal() as session:
-        feedback = (
-            session.query(UserFeedback)
-            .order_by(UserFeedback.timestamp.desc())
-            .limit(limit)
-            .all()
-        )
-        return feedback
+@app.post("/price-triggers/", response_model=PriceTrigger)
+def create_price_trigger(trigger: PriceTriggerIn):
+    global next_trigger_id
+    try:
+        prices = fetch_item_prices(trigger.name, trigger.zip)
+        current = prices[0].kroger_price if prices else None
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to set trigger: {e}")
 
-# get average rating from users
-@app.get("/feedback/average-rating/")
-def average_rating(user_id: Optional[str] = None):
-    with SessionLocal() as session:
-        query = session.query(func.avg(UserFeedback.rating))
-        if user_id:
-            query = query.filter(UserFeedback.user_id == user_id)
-        avg = query.scalar()
-        return {"average_rating": round(avg, 2) if avg else None}
+    new = PriceTrigger(
+        id=next_trigger_id,
+        name=trigger.name,
+        target_price=trigger.target_price,
+        current_price=current
+    )
+    triggers.append(new)
+    next_trigger_id += 1
+    return new
 
+@app.get("/price-triggers/", response_model=List[PriceTrigger])
+def list_price_triggers():
+    for t in triggers:
+        try:
+            prices = fetch_item_prices(t.name, None)
+            t.current_price = prices[0].kroger_price if prices else t.current_price
+        except:
+            pass
+    return triggers
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# scheduler for price checking
-
-from apscheduler.schedulers.background import BackgroundScheduler
-import atexit
-
-# initialize scheduler
-scheduler = BackgroundScheduler()
-
-# schedule job to run every hour
-scheduler.add_job(check_price_triggers, "interval", hours=1)
-
-# start scheduler
-scheduler.start()
-
-# shutdown cleanly on exit
-atexit.register(lambda: scheduler.shutdown())
+@app.get("/recommendations/", response_model=List[Recommendation])
+def recommendations():
+    recs: List[Recommendation] = []
+    for t in triggers:
+        try:
+            for it in fetch_item_prices(t.name, None):
+                if abs(it.kroger_price - t.target_price) <= 0.5:
+                    recs.append(Recommendation(name=it.name, kroger_price=it.kroger_price))
+        except:
+            continue
+    if not recs:
+        for term in ["milk", "eggs", "bread"]:
+            try:
+                for it in fetch_item_prices(term, None)[:3]:
+                    recs.append(Recommendation(name=it.name, kroger_price=it.kroger_price))
+            except:
+                pass
+    return recs
