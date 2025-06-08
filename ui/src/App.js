@@ -28,7 +28,6 @@ import ConfirmSignUp from './ConfirmSignUp'
 import Recommendations from './Recommendations'
 import PriceTriggers from './PriceTriggers'
 
-axios.defaults.baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000'
 
 function Home({ user }) {
   return (
