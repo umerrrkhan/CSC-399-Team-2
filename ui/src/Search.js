@@ -18,7 +18,7 @@ export default function Search() {
     if (!term) { setError('Please enter a search term.'); return }
     setError(''); setItems([]); setLoading(true)
     try {
-      const res = await axios.get('/item-prices/', { params: { term, zip: zip.trim() || undefined } })
+      const res = await axios.get('https://marketbasket-api.onrender.com/item-prices/', { params: { term, zip: zip.trim() || undefined } })
       if (!Array.isArray(res.data)) throw new Error('Bad format')
       setItems(res.data)
       if (res.data.length === 0) setError('No items returned.')
