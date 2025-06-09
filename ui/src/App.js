@@ -28,6 +28,7 @@ import ConfirmSignUp from './ConfirmSignUp'
 import Recommendations from './Recommendations'
 import PriceTriggers from './PriceTriggers'
 
+axios.defaults.baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000'
 
 function Home({ user }) {
   return (
@@ -114,9 +115,14 @@ function Search() {
       setLoading(true)
       console.log('🔎 Searching for:', { term, zip: zipCode })
 
-      const response = await axios.get('https://market-basket-api.onrender.com/item-prices/', {
+      const response = await axios.get('/item-prices/', {
         params: { term, zip: zipCode.trim() || undefined }
       })
+
+      // const response = await axios.get('https://marketbasket-api.onrender.com/item-prices/', {
+      //    params: { term, zip: zipCode.trim() || undefined }
+      // })
+
 
       console.log('✅ API response:', response.data)
       if (!Array.isArray(response.data)) {
@@ -128,13 +134,18 @@ function Search() {
         setError('No items returned from API.')
       }
     } catch (err) {
-      const msg =
-        err.response?.data?.detail ||
-        err.response?.data?.message ||
-        err.message ||
-        'Failed to fetch data.'
-      console.error('❌ Fetch error:', err)
-      setError(msg)
+      if (axios.isAxiosError(err)) {
+  console.error('❌ Axios error:', {
+    message: err.message,
+    status: err.response?.status,
+    data: err.response?.data,
+    url: err.config?.url,
+    method: err.config?.method,
+  })
+} else {
+  console.error('❌ Unknown error:', err)
+}
+
     } finally {
       setLoading(false)
     }

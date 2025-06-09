@@ -7,6 +7,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv, find_dotenv
+from sqlalchemy import Column, Integer, String, Float, create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+import os
+import requests
+import base64
+from fastapi import Query
+import openai
+from sqlalchemy import Boolean
+from fastapi import Header, Depends
+from jose import jwt
+import requests
+from datetime import datetime
+from sqlalchemy import DateTime
+from sqlalchemy import func
 
 # explicitly locate and load your .env
 dotenv_path = find_dotenv()
@@ -51,10 +66,7 @@ class Recommendation(BaseModel):
 def get_kroger_access_token() -> str:
     url = "https://api.kroger.com/v1/connect/oauth2/token"
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    data = {
-        "grant_type": "client_credentials",
-        "scope": "product.compact profile.compact"
-    }
+    data = {"grant_type": "client_credentials", "scope": "product.compact"}
     resp = requests.post(
         url,
         headers=headers,
@@ -83,21 +95,39 @@ def fetch_item_prices(term: str, zip: Optional[str]) -> List[ItemPrice]:
     token = get_kroger_access_token()
     url = "https://api.kroger.com/v1/products"
     params = {"filter.term": term, "filter.limit": 20}
+
     if zip:
         loc = get_nearest_location_id(zip)
+        print(f"🔍 Nearest location ID for ZIP {zip}: {loc}")
         if loc:
             params["filter.locationId"] = loc
+
     headers = {"Authorization": f"Bearer {token}"}
+    print(f"📡 Requesting Kroger API with params: {params}")
 
     resp = requests.get(url, headers=headers, params=params, timeout=5)
     resp.raise_for_status()
+    data = resp.json()
+    print("📦 Kroger API response data sample:", data.get("data", [])[:2])  # show first 2 items
+
     items: List[ItemPrice] = []
-    for p in resp.json().get("data", []):
-        desc = p.get("description", "Unknown")
-        price = p.get("items", [{}])[0].get("price", {}).get("regular")
-        if price is not None:
-            items.append(ItemPrice(name=desc, kroger_price=price))
+    for p in data.get("data", []):
+        desc = p.get("description") or "Unknown"
+
+        price = None
+        items_list = p.get("items")
+        if items_list and isinstance(items_list, list):
+            first_item = items_list[0]
+            price_info = first_item.get("price", {})
+            if isinstance(price_info, dict):
+                price = price_info.get("regular")
+
+        # include the item even if price is None
+        items.append(ItemPrice(name=desc, kroger_price=price if price is not None else 0.0))
+
+    print(f"✅ Found {len(items)} items (including those without price).")
     return items
+
 
 @app.get("/item-prices/", response_model=List[ItemPrice])
 def get_item_prices(term: str, zip: Optional[str] = None):
