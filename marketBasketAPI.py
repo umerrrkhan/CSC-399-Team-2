@@ -1,38 +1,19 @@
-# marketBasketAPI.py
-import os
-import requests
-import traceback
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv, find_dotenv
-from sqlalchemy import Column, Integer, String, Float, create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-from dotenv import load_dotenv
+from jose import jwt, JWTError
+import traceback
+import requests
 import os
-import requests
-import base64
-from fastapi import Query
-import openai
-from sqlalchemy import Boolean
-from fastapi import Header, Depends
-from jose import jwt
-import requests
-from datetime import datetime
-from sqlalchemy import DateTime
-from sqlalchemy import func
 
-# explicitly locate and load your .env
+# Load environment variables
 dotenv_path = find_dotenv()
 load_dotenv(dotenv_path)
-print("🔑 Loaded KROGER_CLIENT_ID:", os.getenv("KROGER_CLIENT_ID"))
-print("🔑 Loaded KROGER_CLIENT_SECRET:", os.getenv("KROGER_CLIENT_SECRET"))
-
-if not (os.getenv("KROGER_CLIENT_ID") and os.getenv("KROGER_CLIENT_SECRET")):
-    raise RuntimeError("Missing Kroger credentials in .env")
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,17 +22,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-triggers: List["PriceTrigger"] = []
-next_trigger_id = 1
+# Auth helper
+COGNITO_REGION = os.getenv("COGNITO_REGION")
+COGNITO_POOL_ID = os.getenv("COGNITO_POOL_ID")
+
+
+def get_current_user(token: Optional[str] = Header(None, alias="Authorization")) -> str:
+    if not token or not token.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization required")
+    try:
+        token = token.split(" ")[1]
+        payload = jwt.get_unverified_claims(token)
+        return payload.get("email")
+    except JWTError:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
 
 class ItemPrice(BaseModel):
     name: str
     kroger_price: float
 
+
 class PriceTriggerIn(BaseModel):
     name: str
     target_price: float
     zip: Optional[str] = None
+
 
 class PriceTrigger(BaseModel):
     id: int
@@ -59,9 +55,15 @@ class PriceTrigger(BaseModel):
     target_price: float
     current_price: Optional[float] = None
 
+
 class Recommendation(BaseModel):
     name: str
     kroger_price: float
+
+
+# In-memory store for user-specific triggers
+user_triggers = {}
+
 
 def get_kroger_access_token() -> str:
     url = "https://api.kroger.com/v1/connect/oauth2/token"
@@ -77,6 +79,7 @@ def get_kroger_access_token() -> str:
     resp.raise_for_status()
     return resp.json()["access_token"]
 
+
 def get_nearest_location_id(zip: str) -> Optional[str]:
     token = get_kroger_access_token()
     url = "https://api.kroger.com/v1/locations"
@@ -90,6 +93,7 @@ def get_nearest_location_id(zip: str) -> Optional[str]:
     resp.raise_for_status()
     data = resp.json().get("data", [])
     return data[0].get("locationId") if data else None
+
 
 def fetch_item_prices(term: str, zip: Optional[str]) -> List[ItemPrice]:
     token = get_kroger_access_token()
@@ -108,12 +112,10 @@ def fetch_item_prices(term: str, zip: Optional[str]) -> List[ItemPrice]:
     resp = requests.get(url, headers=headers, params=params, timeout=5)
     resp.raise_for_status()
     data = resp.json()
-    print("📦 Kroger API response data sample:", data.get("data", [])[:2])  # show first 2 items
 
     items: List[ItemPrice] = []
     for p in data.get("data", []):
         desc = p.get("description") or "Unknown"
-
         price = None
         items_list = p.get("items")
         if items_list and isinstance(items_list, list):
@@ -121,11 +123,8 @@ def fetch_item_prices(term: str, zip: Optional[str]) -> List[ItemPrice]:
             price_info = first_item.get("price", {})
             if isinstance(price_info, dict):
                 price = price_info.get("regular")
-
-        # include the item even if price is None
         items.append(ItemPrice(name=desc, kroger_price=price if price is not None else 0.0))
 
-    print(f"✅ Found {len(items)} items (including those without price).")
     return items
 
 
@@ -137,9 +136,9 @@ def get_item_prices(term: str, zip: Optional[str] = None):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Kroger API error: {e}")
 
+
 @app.post("/price-triggers/", response_model=PriceTrigger)
-def create_price_trigger(trigger: PriceTriggerIn):
-    global next_trigger_id
+def create_price_trigger(trigger: PriceTriggerIn, user_email: str = Depends(get_current_user)):
     try:
         prices = fetch_item_prices(trigger.name, trigger.zip)
         current = prices[0].kroger_price if prices else None
@@ -147,30 +146,25 @@ def create_price_trigger(trigger: PriceTriggerIn):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to set trigger: {e}")
 
-    new = PriceTrigger(
-        id=next_trigger_id,
+    new_trigger = PriceTrigger(
+        id=len(user_triggers.get(user_email, [])) + 1,
         name=trigger.name,
         target_price=trigger.target_price,
         current_price=current
     )
-    triggers.append(new)
-    next_trigger_id += 1
-    return new
+    user_triggers.setdefault(user_email, []).append(new_trigger)
+    return new_trigger
+
 
 @app.get("/price-triggers/", response_model=List[PriceTrigger])
-def list_price_triggers():
-    for t in triggers:
-        try:
-            prices = fetch_item_prices(t.name, None)
-            t.current_price = prices[0].kroger_price if prices else t.current_price
-        except:
-            pass
-    return triggers
+def list_price_triggers(user_email: str = Depends(get_current_user)):
+    return user_triggers.get(user_email, [])
+
 
 @app.get("/recommendations/", response_model=List[Recommendation])
-def recommendations():
+def recommendations(user_email: str = Depends(get_current_user)):
     recs: List[Recommendation] = []
-    for t in triggers:
+    for t in user_triggers.get(user_email, []):
         try:
             for it in fetch_item_prices(t.name, None):
                 if abs(it.kroger_price - t.target_price) <= 0.5:
