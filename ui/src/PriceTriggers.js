@@ -1,4 +1,4 @@
-// src/PriceTriggers.js
+// src/PriceTriggers.jsAdd commentMore actions
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import {
@@ -40,12 +40,12 @@ export default function PriceTriggers() {
         if (diff <= 0) {
           setAlerts(a => [
             ...a,
-            ${t.name}: 🎉 On sale! You save $${Math.abs(diff).toFixed(2)}
+            `${t.name}: 🎉 On sale! You save $${Math.abs(diff).toFixed(2)}`
           ])
         } else {
           setAlerts(a => [
             ...a,
-            ${t.name}: 🔺 Above target by $${diff.toFixed(2)}
+            `${t.name}: 🔺 Above target by $${diff.toFixed(2)}`
           ])
         }
       }
@@ -112,9 +112,9 @@ export default function PriceTriggers() {
           <ListItem key={t.id} divider>
             <ListItemText
               primary={t.name}
-              secondary={Target: $${t.target_price.toFixed(2)}  |  Current: ${
-                t.current_price != null ? $${t.current_price.toFixed(2)} : 'N/A'
-              }}
+              secondary={`Target: $${t.target_price.toFixed(2)}  |  Current: ${
+                t.current_price != null ? `$${t.current_price.toFixed(2)}` : 'N/A'
+              }`}
             />
           </ListItem>
         ))}
