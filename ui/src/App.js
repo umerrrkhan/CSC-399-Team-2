@@ -14,7 +14,12 @@ import {
   Card,
   CardContent,
   CardActions,
-  CircularProgress
+  TextField,
+  CircularProgress,
+  Alert,
+  List,
+  ListItem,
+  ListItemText
 } from '@mui/material'
 
 import SignUp from './SignUp'
@@ -90,27 +95,123 @@ function Home({ user }) {
   )
 }
 
+function Search() {
+  const [items, setItems] = useState([])
+  const [searchText, setSearchText] = useState('')
+  const [zipCode, setZipCode] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSearch = async () => {
+    const term = searchText.trim()
+    if (!term) {
+      setError('Please enter a search term.')
+      return
+    }
+
+    try {
+      setError('')
+      setItems([])
+      setLoading(true)
+      console.log('🔎 Searching for:', { term, zip: zipCode })
+
+      const response = await axios.get('/item-prices/', {
+        params: { term, zip: zipCode.trim() || undefined }
+      })
+
+      // const response = await axios.get('https://marketbasket-api.onrender.com/item-prices/', {
+      //    params: { term, zip: zipCode.trim() || undefined }
+      // })
+
+
+      console.log('✅ API response:', response.data)
+      if (!Array.isArray(response.data)) {
+        throw new Error('Unexpected response format')
+      }
+
+      setItems(response.data)
+      if (response.data.length === 0) {
+        setError('No items returned from API.')
+      }
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+  console.error('❌ Axios error:', {
+    message: err.message,
+    status: err.response?.status,
+    data: err.response?.data,
+    url: err.config?.url,
+    method: err.config?.method,
+  })
+} else {
+  console.error('❌ Unknown error:', err)
+}
+
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Container sx={{ mt: 4 }}>
+      <Typography variant="h4" gutterBottom>Search Kroger</Typography>
+      <Typography fontSize={16} gutterBottom>Optional ZIP filters to nearest store</Typography>
+
+      <Box sx={{ display: 'flex', mb: 2, gap: 2 }}>
+        <TextField
+          fullWidth
+          variant="outlined"
+          placeholder="e.g. apples"
+          value={searchText}
+          onChange={e => setSearchText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleSearch()}
+        />
+        <TextField
+          sx={{ width: 120 }}
+          variant="outlined"
+          placeholder="ZIP"
+          value={zipCode}
+          onChange={e => setZipCode(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleSearch()}
+        />
+        <Button variant="contained" onClick={handleSearch} disabled={loading}>
+          {loading ? <CircularProgress size={24} /> : 'Search'}
+        </Button>
+      </Box>
+
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      <List>
+        {items.length > 0 ? (
+          items.map((it, i) => (
+            <ListItem key={i} divider>
+              <ListItemText
+                primary={it.name}
+                secondary={`$${it.kroger_price.toFixed(2)}`}
+              />
+            </ListItem>
+          ))
+        ) : (
+          <ListItem>
+            <ListItemText primary={loading ? 'Loading…' : 'No results; try another term.'} />
+          </ListItem>
+        )}
+      </List>
+    </Container>
+  )
+}
+
 function App() {
   const [user, setUser] = useState(null)
 
   useEffect(() => {
     Auth.currentAuthenticatedUser()
-      .then(u => {
-        setUser(u)
-        Auth.currentSession().then(session => {
-          localStorage.setItem('token', session.getIdToken().getJwtToken())
-        })
-      })
-      .catch(() => {
-        setUser(null)
-        localStorage.removeItem('token')
-      })
+      .then(u => setUser(u))
+      .catch(() => setUser(null))
   }, [])
 
   const handleLogout = async () => {
     await Auth.signOut()
     setUser(null)
-    localStorage.removeItem('token')
   }
 
   return (
@@ -135,7 +236,7 @@ function App() {
             </>
           ) : (
             <>
-              <Typography sx={{ mx: 2 }}>{`Welcome, ${user.attributes.name}`}</Typography>
+              <Typography sx={{ mx: 2 }}>'Welcome, ${user.attributes.name}'</Typography>
               <Button onClick={handleLogout} color="secondary">Logout</Button>
             </>
           )}
@@ -152,15 +253,6 @@ function App() {
         <Route path="/confirm" element={<ConfirmSignUp />} />
       </Routes>
     </>
-  )
-}
-
-// Placeholder component for Search (since it wasn't included in the last message)
-function Search() {
-  return (
-    <Container sx={{ mt: 4 }}>
-      <Typography variant="h4">Search Page</Typography>
-    </Container>
   )
 }
 
