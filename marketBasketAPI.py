@@ -239,7 +239,7 @@ def recommendations(
     print(f"✅ /recommendations/ called by user ID: {current_user.id}")
     recs: List[Recommendation] = []
 
-    # ✅ Use the correct table
+    # ✅ Use the correct table here
     triggers = (
         db.query(PriceTriggerDB)
         .filter(PriceTriggerDB.user_id == current_user.id)

@@ -105,6 +105,7 @@ function Search() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+
 const handleSearch = async () => {
   const term = searchText.trim()
   if (!term) {
