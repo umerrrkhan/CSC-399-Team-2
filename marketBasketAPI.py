@@ -2,7 +2,7 @@
 import os
 import requests
 import traceback
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -10,18 +10,28 @@ from dotenv import load_dotenv, find_dotenv
 from sqlalchemy import Column, Integer, String, Float, create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
-import os
-import requests
 import base64
 from fastapi import Query
 import openai
 from sqlalchemy import Boolean
 from fastapi import Header, Depends
 from jose import jwt
-import requests
 from datetime import datetime
 from sqlalchemy import DateTime
 from sqlalchemy import func
+from sqlalchemy.orm import Session
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import relationship
+from auth import get_current_user
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func
+from sqlalchemy.orm import declarative_base, relationship
+from database import get_db
+from models import User, SearchTerm, Base, PriceTriggerDB
+from auth import get_current_user, TokenPayload
+from openai import OpenAI 
+from fastapi import status
+
+router = APIRouter()
 
 # explicitly locate and load your .env
 dotenv_path = find_dotenv()
@@ -62,6 +72,10 @@ class PriceTrigger(BaseModel):
 class Recommendation(BaseModel):
     name: str
     kroger_price: float
+
+
+
+Base = declarative_base()
 
 def get_kroger_access_token() -> str:
     url = "https://api.kroger.com/v1/connect/oauth2/token"
@@ -129,59 +143,169 @@ def fetch_item_prices(term: str, zip: Optional[str]) -> List[ItemPrice]:
     return items
 
 
+
 @app.get("/item-prices/", response_model=List[ItemPrice])
-def get_item_prices(term: str, zip: Optional[str] = None):
+def get_item_prices(
+    term: str,
+    zip: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)  
+):
     try:
+        # ✅ Save search with user
+        search = SearchTerm(term=term, user_id=current_user.id)
+        db.add(search)
+        db.commit()
+
         return fetch_item_prices(term, zip)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Kroger API error: {e}")
 
+
 @app.post("/price-triggers/", response_model=PriceTrigger)
-def create_price_trigger(trigger: PriceTriggerIn):
-    global next_trigger_id
+def create_price_trigger(
+    trigger: PriceTriggerIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     try:
         prices = fetch_item_prices(trigger.name, trigger.zip)
-        current = prices[0].kroger_price if prices else None
+        current_price = prices[0].kroger_price if prices else None
+
+        new_trigger = PriceTriggerDB(
+            name=trigger.name,
+            target_price=trigger.target_price,
+            current_price=current_price,
+            zip_code=trigger.zip,
+            user_id=current_user.id
+        )
+
+        db.add(new_trigger)
+        db.commit()
+        db.refresh(new_trigger)
+
+        return PriceTrigger(
+            id=new_trigger.id,
+            name=new_trigger.name,
+            target_price=new_trigger.target_price,
+            current_price=new_trigger.current_price
+        )
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to set trigger: {e}")
 
-    new = PriceTrigger(
-        id=next_trigger_id,
-        name=trigger.name,
-        target_price=trigger.target_price,
-        current_price=current
-    )
-    triggers.append(new)
-    next_trigger_id += 1
-    return new
 
 @app.get("/price-triggers/", response_model=List[PriceTrigger])
-def list_price_triggers():
-    for t in triggers:
+def list_price_triggers(
+    db: Session = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user)
+):
+    user_triggers = (
+        db.query(PriceTriggerDB)
+        .filter(PriceTriggerDB.user_id == current_user.id)
+        .all()
+    )
+
+    # Refresh current prices
+    triggers = []
+    for t in user_triggers:
         try:
-            prices = fetch_item_prices(t.name, None)
-            t.current_price = prices[0].kroger_price if prices else t.current_price
+            items = fetch_item_prices(t.name, t.zip_code)
+            if items:
+                t.current_price = items[0].kroger_price
+                db.commit()
         except:
             pass
+
+        triggers.append(
+            PriceTrigger(
+                id=t.id,
+                name=t.name,
+                target_price=t.target_price,
+                current_price=t.current_price
+            )
+        )
+
     return triggers
 
+
+
 @app.get("/recommendations/", response_model=List[Recommendation])
-def recommendations():
+def recommendations(
+    db: Session = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user)
+):
+    print(f"✅ /recommendations/ called by user ID: {current_user.id}")
     recs: List[Recommendation] = []
+
+    # ✅ Use the correct table
+    triggers = (
+        db.query(PriceTriggerDB)
+        .filter(PriceTriggerDB.user_id == current_user.id)
+        .all()
+    )
+
+    print(f"🧠 Found {len(triggers)} trigger(s) for user.")
     for t in triggers:
+        print(f"➡️ Trigger: {t.name}, Target: {t.target_price}, ZIP: {t.zip_code}")
+
+    if not triggers:
+        return []
+
+    for trigger in triggers:
         try:
-            for it in fetch_item_prices(t.name, None):
-                if abs(it.kroger_price - t.target_price) <= 0.5:
-                    recs.append(Recommendation(name=it.name, kroger_price=it.kroger_price))
-        except:
+            items = fetch_item_prices(trigger.name, trigger.zip_code)
+            if items:
+                top_item = items[0]
+                recs.append(
+                    Recommendation(
+                        name=top_item.name,
+                        kroger_price=top_item.kroger_price
+                    )
+                )
+        except Exception as e:
+            print(f"❌ Error with trigger '{trigger.name}': {e}")
             continue
-    if not recs:
-        for term in ["milk", "eggs", "bread"]:
-            try:
-                for it in fetch_item_prices(term, None)[:3]:
-                    recs.append(Recommendation(name=it.name, kroger_price=it.kroger_price))
-            except:
-                pass
+
+    print(f"📦 Returning {len(recs)} recommendation(s).")
     return recs
+
+
+# @router.get("/recommendations/", response_model=List[Recommendation])
+# def recommendations(
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user)
+# ):
+#     recs: List[Recommendation] = []
+
+#     # 🧠 Get user's price triggers from the DB
+#     triggers = db.query(PriceTrigger).filter(PriceTrigger.user_id == current_user.id).all()
+
+#     for trigger in triggers:
+#         try:
+#             items = fetch_item_prices(trigger.name, trigger.zip)
+#             if items:
+#                 item = items[0]  # Use top result
+#                 recs.append(Recommendation(name=item.name, kroger_price=item.kroger_price))
+#         except Exception as e:
+#             print(f"⚠️ Error fetching price for '{trigger.name}': {e}")
+#             continue
+
+#     return recs
+
+
+@app.delete("/price-triggers/{trigger_id}")
+def delete_trigger(trigger_id: int, db: Session = Depends(get_db), current_user: TokenPayload = Depends(get_current_user)):
+    trigger = db.query(PriceTriggerDB).filter_by(id=trigger_id, user_id=current_user.sub).first()
+
+    if not trigger:
+        raise HTTPException(status_code=404, detail="Trigger not found.")
+
+    db.delete(trigger)
+    db.commit()
+
+    return {"message": "Trigger deleted."}
+
+
+
